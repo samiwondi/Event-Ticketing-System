@@ -1,0 +1,24 @@
+{
+  "venues" : [ {
+    "id" : "123e4567-e89b-12d3-a456-426614174000",
+    "name" : "Main Hall",
+    "address" : "123 Main Street",
+    "timezone" : "America/New_York"
+  } ],
+  "events" : [ {
+    "id" : "123e4567-e89b-12d3-a456-426614174001",
+    "venueId" : "123e4567-e89b-12d3-a456-426614174000",
+    "title" : "Rock Concert",
+    "startAt" : "2026-09-03T20:00:00-04:00",
+    "endAt" : "2026-09-03T23:00:00-04:00",
+    "status" : "SCHEDULED"
+  } ],
+  // Missing closing bracket for "seats" array – this will break the parser!
+  "seats" : [ {
+    "id" : "123e4567-e89b-12d3-a456-426614174002",
+    "venueId" : "123e4567-e89b-12d3-a456-426614174000",
+    "section" : "Orchestra",
+    "row" : "A",
+    "number" : 1,
+    "attributes" : null
+  } ],
