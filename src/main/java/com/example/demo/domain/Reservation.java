@@ -1,8 +1,12 @@
 package com.example.demo.domain;
 
 import java.time.Instant;
-import java.time.ZonedDateTime;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.UUID;
 
 public class Reservation {
     private final UUID id;
@@ -37,7 +41,6 @@ public class Reservation {
     public Instant getHoldExpiresAt() { return holdExpiresAt; }
     public List<ReservationSeat> getSeats() { return Collections.unmodifiableList(seats); }
 
-    // Business logic methods
     public void confirm() {
         if (status == ReservationStatus.CONFIRMED) {
             throw new IllegalStateException("Reservation already confirmed");
@@ -57,8 +60,7 @@ public class Reservation {
             throw new IllegalStateException("Already cancelled");
         }
         if (status == ReservationStatus.CONFIRMED) {
-            // In real system, might have a cancellation window; we allow it per spec
-            // but we could add logic later.
+            
         }
         this.status = ReservationStatus.CANCELLED;
     }
