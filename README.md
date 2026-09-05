@@ -1,45 +1,75 @@
-# Ticketing System – Phase 1
+# Ticketing System – Phase 2
 
-A pure Java CLI ticketing system for venues and events.  
-This is the **foundational phase** of a multi‑phase project that will later evolve into a Spring Boot REST API with PostgreSQL, security, observability, and performance tuning.
+**Concurrency, Caching & Hold Expiry**
 
-## Features (Phase 1)
+This is the second phase of the ticketing system project. Building on the Core Java CLI from Phase 1, we've added:
 
-- **Domain‑Driven Design** – clear entities: `Venue`, `Event`, `Seat`, `Reservation`, `ReservationSeat`.
-- **In‑memory repositories** – with concurrent collections (`ConcurrentHashMap`).
-- **JSON persistence** – save/load the entire system state using Jackson.
-- **Command‑Line Interface** – create venues/events/seats, hold/confirm/cancel reservations, and run basic reports.
-- **Unit tests** – JUnit 5 + AssertJ, covering domain logic, services, and JSON round‑trip.
-- **Error handling** – custom exceptions, friendly error messages.
-- **Java Time API** – proper handling of time zones and durations.
+- **Automatic hold expiry** (background sweeper)
+- **Per-event locking** to prevent double-booking
+- **LRU cache** for seat availability
+- **System Status** menu to monitor runtime behaviour
+- **Concurrency tests** to verify thread-safety
 
-### Core Commands
-| Command | Description |
-|---------|-------------|
-| `create venue <name> <address> <timezone>` | Add a new venue |
-| `create event <venueId> <title> <start> <end>` | Schedule an event |
-| `create seat <venueId> <section> <row> <number>` | Add a seat to a venue |
-| `list venues`, `list events`, `list seats <venueId>` | List data |
-| `hold <eventId> <email> <seatId1,seatId2,...>` | Place a hold on seats |
-| `confirm <reservationId>` | Confirm a hold |
-| `cancel <reservationId>` | Cancel a reservation |
-| `reports seats-per-event`, `reports reservations-per-event` | Generate reports |
-| `save`, `load` | Persist / restore state (to `ticketing-data.json`) |
-| `exit` | Quit the application |
+---
 
-## Technology Stack
+## ✨ Features
 
-- **Java 17** (compatible with JDK 17+)
-- **Maven** – build and dependency management
-- **Jackson** – JSON serialisation/deserialisation
-- **JUnit 5** – unit testing
-- **AssertJ** – fluent assertions
+### Core Ticketing (from Phase 1)
+- Domain model: `Venue`, `Event`, `Seat`, `Reservation`, `ReservationSeat`, `Money`
+- In-memory repositories with `ConcurrentHashMap`
+- Menu‑driven CLI (no more flat commands)
+- JSON persistence (manual save/load via menu)
+- Reports: seats per event, reservations per event, detailed seat report
 
-## How to Build and Run
+### Phase 2 – New Features
+
+#### 🔁 Hold Expiry Sweeper
+- Runs in the background every **2 seconds**
+- Automatically cancels `HOLD` reservations that have passed their expiry time
+- Logs cancellation events to the console
+
+#### 🔒 Per-Event Locking
+- Each event has its own `ReentrantLock`
+- Prevents double-booking in concurrent scenarios
+- Locks are acquired automatically when holding, confirming, or cancelling reservations
+
+#### 📦 LRU Cache (Seat Availability)
+- Caches seat lists per event to reduce repository calls
+- Max size: **100 entries** (configurable)
+- Uses `LinkedHashMap` with `removeEldestEntry`
+- Cache is invalidated after any reservation change
+
+#### 📊 System Status Menu
+- New option in the main menu: `7. System Status`
+- Shows:
+  - Whether the sweeper is running
+  - Number of active HOLD reservations
+  - Current cache size
+  - Number of event locks currently held
+
+#### 🧪 Concurrency Tests
+- `BookingServiceConcurrencyTest`
+- Uses `CountDownLatch` to simulate simultaneous requests
+- Verifies exactly one success among 10 concurrent holds on the same seat
+
+---
+
+## 🛠️ Technology Stack
+
+| Component | Technology |
+|-----------|------------|
+| Language | Java 17+ (tested with JDK 20) |
+| Build Tool | Maven |
+| JSON | Jackson 2.15.2 |
+| Testing | JUnit 5 + AssertJ |
+| Concurrency | `ReentrantLock`, `ConcurrentHashMap`, `ScheduledExecutorService` |
+| Cache | `LinkedHashMap` with LRU eviction |
+
+---
 
 ### Prerequisites
 - JDK 17 or later (tested with JDK 20)
-- Maven (or use the included Maven wrapper)
+- Maven (or use the Maven wrapper)
 
 ### Build
 ```bash

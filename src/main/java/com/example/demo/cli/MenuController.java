@@ -1,17 +1,20 @@
 package com.example.demo.cli;
 
-import com.example.demo.domain.Reservation;
-import com.example.demo.exception.ReservationException;
-import com.example.demo.service.BookingService;
-import com.example.demo.service.HoldExpirySweeper;
-import com.example.demo.service.ReportService;
-import com.example.demo.service.VenueService;
-
 import java.time.ZonedDateTime;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
+
+import com.example.demo.persistence.JsonStorage;
+import com.example.demo.repository.EventRepository;
+import com.example.demo.repository.ReservationRepository;
+import com.example.demo.repository.SeatRepository;
+import com.example.demo.repository.VenueRepository;
+import com.example.demo.service.BookingService;
+import com.example.demo.service.HoldExpirySweeper;
+import com.example.demo.service.ReportService;
+import com.example.demo.service.VenueService;
 
 public class MenuController {
     private final VenueService venueService;
@@ -19,16 +22,28 @@ public class MenuController {
     private final ReportService reportService;
     private final HoldExpirySweeper sweeper;
     private final MenuRenderer renderer;
+    private final JsonStorage storage;
+    private final VenueRepository venueRepository;
+    private final EventRepository eventRepository;
+    private final SeatRepository seatRepository;
+    private final ReservationRepository reservationRepository;
     private boolean running = true;
 
     public MenuController(VenueService venueService, BookingService bookingService,
                           ReportService reportService, HoldExpirySweeper sweeper,
-                          MenuRenderer renderer) {
+                          MenuRenderer renderer, JsonStorage storage,
+                          VenueRepository venueRepository, EventRepository eventRepository,
+                          SeatRepository seatRepository, ReservationRepository reservationRepository) {
         this.venueService = venueService;
         this.bookingService = bookingService;
         this.reportService = reportService;
         this.sweeper = sweeper;
         this.renderer = renderer;
+        this.storage = storage;
+        this.venueRepository = venueRepository;
+        this.eventRepository = eventRepository;
+        this.seatRepository = seatRepository;
+        this.reservationRepository = reservationRepository;
     }
 
     public void run() {
@@ -41,17 +56,20 @@ public class MenuController {
                 case 3 -> seatManagement();
                 case 4 -> reservationManagement();
                 case 5 -> reportsMenu();
-                case 6 -> statusMenu();
-                case 7 -> saveLoadMenu();
+                case 6 -> saveLoadMenu();
+                case 7 -> statusMenu();
                 case 8 -> {
                     running = false;
                     renderer.printMessage("Goodbye!");
                 }
-                default -> renderer.printError("Invalid option. Please try again.");
+                default -> renderer.printError("Invalid option.");
             }
         }
     }
 
+    // -----------------------------------------------------------------
+    //  VENUE MANAGEMENT
+    // -----------------------------------------------------------------
     private void venueManagement() {
         boolean back = false;
         while (!back) {
@@ -84,6 +102,9 @@ public class MenuController {
         }
     }
 
+    // -----------------------------------------------------------------
+    //  EVENT MANAGEMENT
+    // -----------------------------------------------------------------
     private void eventManagement() {
         boolean back = false;
         while (!back) {
@@ -164,6 +185,9 @@ public class MenuController {
         }
     }
 
+    // -----------------------------------------------------------------
+    //  SEAT MANAGEMENT
+    // -----------------------------------------------------------------
     private void seatManagement() {
         boolean back = false;
         while (!back) {
@@ -213,7 +237,7 @@ public class MenuController {
                     renderer.pressEnterToContinue();
                 }
                 case 3 -> {
-                    renderer.printMessage("CSV import not fully implemented. (Phase 1 placeholder)");
+                    renderer.printMessage("CSV import not fully implemented. (Placeholder)");
                     renderer.pressEnterToContinue();
                 }
                 case 4 -> back = true;
@@ -222,6 +246,9 @@ public class MenuController {
         }
     }
 
+    // -----------------------------------------------------------------
+    //  RESERVATION MANAGEMENT
+    // -----------------------------------------------------------------
     private void reservationManagement() {
         boolean back = false;
         while (!back) {
@@ -308,6 +335,9 @@ public class MenuController {
         }
     }
 
+    // -----------------------------------------------------------------
+    //  REPORTS
+    // -----------------------------------------------------------------
     private void reportsMenu() {
         boolean back = false;
         while (!back) {
@@ -352,6 +382,62 @@ public class MenuController {
         }
     }
 
+    // -----------------------------------------------------------------
+    //  SAVE / LOAD
+    // -----------------------------------------------------------------
+    private void saveLoadMenu() {
+        boolean back = false;
+        while (!back) {
+            renderer.printSaveLoadMenu();
+            int choice = renderer.readInt();
+            switch (choice) {
+                case 1 -> saveState();
+                case 2 -> loadState();
+                case 3 -> back = true;
+                default -> renderer.printError("Invalid option.");
+            }
+            if (choice != 3) renderer.pressEnterToContinue();
+        }
+    }
+
+    private void saveState() {
+        try {
+            var venues = venueRepository.findAll();
+            var events = eventRepository.findAll();
+            var seats = seatRepository.findAll();
+            var reservations = reservationRepository.findAll();
+            storage.save(venues, events, seats, reservations);
+            renderer.printSuccess("State saved successfully to ticketing-data.json");
+        } catch (Exception e) {
+            renderer.printError("Failed to save state: " + e.getMessage());
+        }
+    }
+
+    private void loadState() {
+        try {
+            var context = storage.load();
+
+            // Clear existing data
+            venueRepository.findAll().forEach(v -> venueRepository.deleteById(v.getId()));
+            eventRepository.findAll().forEach(e -> eventRepository.deleteById(e.getId()));
+            seatRepository.findAll().forEach(s -> seatRepository.deleteById(s.getId()));
+            reservationRepository.findAll().forEach(r -> reservationRepository.deleteById(r.getId()));
+
+            // Populate with loaded data
+            context.venues.forEach(venueRepository::save);
+            context.events.forEach(eventRepository::save);
+            context.seats.forEach(seatRepository::save);
+            context.reservations.forEach(reservationRepository::save);
+
+            renderer.printSuccess("State loaded successfully from ticketing-data.json");
+        } catch (Exception e) {
+            renderer.printError("Failed to load state: " + e.getMessage());
+        }
+    }
+
+    // -----------------------------------------------------------------
+    //  SYSTEM STATUS (Phase 2)
+    // -----------------------------------------------------------------
     private void statusMenu() {
         boolean back = false;
         while (!back) {
@@ -367,26 +453,6 @@ public class MenuController {
                     renderer.pressEnterToContinue();
                 }
                 case 2 -> back = true;
-                default -> renderer.printError("Invalid option.");
-            }
-        }
-    }
-
-    private void saveLoadMenu() {
-        boolean back = false;
-        while (!back) {
-            renderer.printSaveLoadMenu();
-            int choice = renderer.readInt();
-            switch (choice) {
-                case 1 -> {
-                    renderer.printMessage("Saving state... (not fully implemented)");
-                    renderer.pressEnterToContinue();
-                }
-                case 2 -> {
-                    renderer.printMessage("Loading state... (not fully implemented)");
-                    renderer.pressEnterToContinue();
-                }
-                case 3 -> back = true;
                 default -> renderer.printError("Invalid option.");
             }
         }

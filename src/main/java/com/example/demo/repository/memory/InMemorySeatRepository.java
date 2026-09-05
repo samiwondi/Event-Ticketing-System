@@ -1,5 +1,6 @@
 package com.example.demo.repository.memory;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -46,5 +47,10 @@ public class InMemorySeatRepository implements SeatRepository {
     @Override
     public boolean existsById(UUID id) {
         return store.containsKey(id);
+    }
+
+    @Override
+    public List<Seat> findAll() {   // <-- IMPLEMENTATION
+        return new ArrayList<>(store.values());
     }
 }

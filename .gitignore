@@ -31,3 +31,17 @@ build/
 
 ### VS Code ###
 .vscode/
+*.swp
+*.swo
+*~
+
+# Maven
+target/
+*.class
+
+# Logs
+*.log
+
+# System files
+.DS_Store
+Thumbs.db

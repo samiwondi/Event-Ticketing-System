@@ -1,12 +1,13 @@
 package com.example.demo.cli;
 
+import java.util.List;
+import java.util.Scanner;
+import java.util.UUID;
+
 import com.example.demo.domain.Event;
 import com.example.demo.domain.Reservation;
 import com.example.demo.domain.Seat;
 import com.example.demo.domain.Venue;
-
-import java.util.List;
-import java.util.Scanner;
 
 public class MenuRenderer {
     private final Scanner scanner = new Scanner(System.in);
@@ -18,7 +19,9 @@ public class MenuRenderer {
         System.out.println("3. Seat Management");
         System.out.println("4. Reservation Management");
         System.out.println("5. Reports");
-        System.out.println("6. Exit");
+        System.out.println("6. Save / Load");
+        System.out.println("7. System Status");
+        System.out.println("8. Exit");
         System.out.println("=======================================");
         System.out.print("Select option: ");
     }
@@ -75,6 +78,23 @@ public class MenuRenderer {
         System.out.print("Select option: ");
     }
 
+    public void printSaveLoadMenu() {
+        System.out.println("\n========== Save / Load ==========");
+        System.out.println("1. Save state to JSON");
+        System.out.println("2. Load state from JSON");
+        System.out.println("3. Back to main menu");
+        System.out.println("==================================");
+        System.out.print("Select option: ");
+    }
+
+    public void printStatusMenu() {
+        System.out.println("\n========== System Status ==========");
+        System.out.println("1. Show full status");
+        System.out.println("2. Back to main menu");
+        System.out.println("====================================");
+        System.out.print("Select option: ");
+    }
+
     public String readLine() {
         return scanner.nextLine().trim();
     }
@@ -88,8 +108,10 @@ public class MenuRenderer {
     }
 
     public UUID readUUID() {
+        String input = scanner.nextLine().trim();
+        if (input.isEmpty()) return null;
         try {
-            return UUID.fromString(scanner.nextLine().trim());
+            return UUID.fromString(input);
         } catch (IllegalArgumentException e) {
             return null;
         }
@@ -143,6 +165,15 @@ public class MenuRenderer {
                     r.getId(), r.getEventId(), r.getCustomerEmail(), r.getStatus(), r.getSeats().size());
         }
         System.out.println("==================================");
+    }
+
+    public void printStatus(boolean sweeperRunning, int activeHolds, int cacheSize, int lockedEvents) {
+        System.out.println("\n========== System Status ==========");
+        System.out.println("Sweeper running: " + (sweeperRunning ? "YES" : "NO"));
+        System.out.println("Active HOLD reservations: " + activeHolds);
+        System.out.println("Seat availability cache size: " + cacheSize);
+        System.out.println("Event locks currently held: " + lockedEvents);
+        System.out.println("====================================");
     }
 
     public void printMessage(String message) {
