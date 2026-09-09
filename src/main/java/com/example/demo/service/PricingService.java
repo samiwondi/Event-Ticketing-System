@@ -1,11 +1,11 @@
 package com.example.demo.service;
 
+import com.example.demo.domain.Event;
 import com.example.demo.domain.Money;
-import com.example.demo.domain.ReservationSeat;
+import com.example.demo.domain.Seat;
 
 public class PricingService {
-    // Basic pricing: could be extended with strategies per event.
-    public Money calculatePrice(ReservationSeat seat) {
-        return seat.finalPrice();
+    public Money calculatePrice(Event event, Seat seat) {
+        return event.getPricingRules().getPriceForCategory(seat.getCategory());
     }
 }

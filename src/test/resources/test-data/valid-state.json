@@ -1,47 +1,69 @@
 {
-  "venues" : [ {
-    "id" : "123e4567-e89b-12d3-a456-426614174000",
-    "name" : "Main Hall",
-    "address" : "123 Main Street",
-    "timezone" : "America/New_York"
-  } ],
-  "events" : [ {
-    "id" : "123e4567-e89b-12d3-a456-426614174001",
-    "venueId" : "123e4567-e89b-12d3-a456-426614174000",
-    "title" : "Rock Concert",
-    "startAt" : "2026-09-03T20:00:00-04:00",
-    "endAt" : "2026-09-03T23:00:00-04:00",
-    "status" : "SCHEDULED"
-  } ],
-  "seats" : [ {
-    "id" : "123e4567-e89b-12d3-a456-426614174002",
-    "venueId" : "123e4567-e89b-12d3-a456-426614174000",
-    "section" : "Orchestra",
-    "row" : "A",
-    "number" : 1,
-    "attributes" : null
-  }, {
-    "id" : "123e4567-e89b-12d3-a456-426614174003",
-    "venueId" : "123e4567-e89b-12d3-a456-426614174000",
-    "section" : "Orchestra",
-    "row" : "A",
-    "number" : 2,
-    "attributes" : null
-  } ],
-  "reservations" : [ {
-    "id" : "123e4567-e89b-12d3-a456-426614174004",
-    "eventId" : "123e4567-e89b-12d3-a456-426614174001",
-    "customerEmail" : "customer@example.com",
-    "status" : "HOLD",
-    "createdAt" : "2026-09-02T18:00:00Z",
-    "confirmedAt" : null,
-    "holdExpiresAt" : "2026-09-02T18:05:00Z",
-    "seats" : [ {
-      "reservationId" : "123e4567-e89b-12d3-a456-426614174004",
-      "seatId" : "123e4567-e89b-12d3-a456-426614174002",
-      "priceAmount" : 0,
-      "priceCurrency" : "USD",
-      "discount" : "NONE"
-    } ]
-  } ]
+  "venues": [
+    {
+      "id": "123e4567-e89b-12d3-a456-426614174000",
+      "name": "Main Hall",
+      "address": "123 Main Street",
+      "timezone": "America/New_York"
+    }
+  ],
+  "events": [
+    {
+      "id": "123e4567-e89b-12d3-a456-426614174001",
+      "venueId": "123e4567-e89b-12d3-a456-426614174000",
+      "title": "Rock Concert",
+      "startAt": "2026-09-03T20:00:00-04:00",
+      "endAt": "2026-09-03T23:00:00-04:00",
+      "status": "SCHEDULED",
+      "currency": "USD",
+      "pricingRules": {
+        "currency": "USD",
+        "defaultPrice": 50.00,
+        "categoryPrices": {
+          "VIP": 100.00,
+          "VVIP": 150.00
+        }
+      }
+    }
+  ],
+  "seats": [
+    {
+      "id": "123e4567-e89b-12d3-a456-426614174002",
+      "venueId": "123e4567-e89b-12d3-a456-426614174000",
+      "section": "Orchestra",
+      "row": "A",
+      "number": 1,
+      "category": "STANDARD",
+      "attributes": []
+    },
+    {
+      "id": "123e4567-e89b-12d3-a456-426614174003",
+      "venueId": "123e4567-e89b-12d3-a456-426614174000",
+      "section": "Orchestra",
+      "row": "A",
+      "number": 2,
+      "category": "VIP",
+      "attributes": ["WHEELCHAIR_ACCESS"]
+    }
+  ],
+  "reservations": [
+    {
+      "id": "123e4567-e89b-12d3-a456-426614174004",
+      "eventId": "123e4567-e89b-12d3-a456-426614174001",
+      "customerEmail": "customer@example.com",
+      "status": "HOLD",
+      "createdAt": "2026-09-02T18:00:00Z",
+      "confirmedAt": null,
+      "holdExpiresAt": "2026-09-02T18:05:00Z",
+      "seats": [
+        {
+          "reservationId": "123e4567-e89b-12d3-a456-426614174004",
+          "seatId": "123e4567-e89b-12d3-a456-426614174002",
+          "priceAmount": 50.00,
+          "priceCurrency": "USD",
+          "discount": "NONE"
+        }
+      ]
+    }
+  ]
 }

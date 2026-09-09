@@ -1,123 +1,156 @@
 package com.example.demo.persistence;
 
-import com.example.demo.domain.*;
-import com.example.demo.exception.StorageException;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.example.demo.domain.Event;
+import com.example.demo.domain.Money;
+import com.example.demo.domain.PricingRules;
+import com.example.demo.domain.Reservation;
+import com.example.demo.domain.ReservationSeat;
+import com.example.demo.domain.Seat;
+import com.example.demo.domain.Venue;
+import com.example.demo.enums.Currency;
+import com.example.demo.enums.DiscountType;
+import com.example.demo.enums.EventStatus;
+import com.example.demo.enums.ReservationStatus;
+import com.example.demo.enums.SeatAttribute;
+import com.example.demo.enums.SeatCategory;
+import com.example.demo.exception.StorageException;
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.util.Collections;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
-
-import static org.assertj.core.api.Assertions.*;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class JsonStorageTest {
 
-    @Test
-    void shouldRoundTrip(@TempDir Path tempDir) throws Exception {
-        var file = tempDir.resolve("test.json").toString();
-        var storage = new JsonStorage(file);
+  @Test
+  void shouldRoundTrip(@TempDir Path tempDir) throws Exception {
+    var file = tempDir.resolve("test.json").toString();
+    var storage = new JsonStorage(file);
 
-        // Build test data
-        var venue = new Venue(UUID.randomUUID(), "Venue", "Addr", ZoneId.of("UTC"));
-        var event = new Event(UUID.randomUUID(), venue.getId(), "Event",
-                ZonedDateTime.now(), ZonedDateTime.now().plusHours(1), "SCHEDULED");
-        var seat = new Seat(UUID.randomUUID(), venue.getId(), "A", "1", 1, null);
-        var reservation = new Reservation(
-                UUID.randomUUID(),
-                event.getId(),
-                "test@example.com",
-                ReservationStatus.HOLD,
-                Instant.now(),
-                null,
-                Instant.now().plusSeconds(300),
-                List.of(new ReservationSeat(UUID.randomUUID(), seat.getId(), Money.zero("USD"), DiscountType.NONE))
-        );
+    Currency currency = Currency.USD;
+    var venue = new Venue(UUID.randomUUID(), "Venue", "Addr", ZoneId.of("UTC"));
+    PricingRules rules = PricingRules.defaultRules(currency);
+    var event = new Event(
+      UUID.randomUUID(),
+      venue.getId(),
+      "Event",
+      ZonedDateTime.now(),
+      ZonedDateTime.now().plusHours(1),
+      EventStatus.SCHEDULED,
+      currency,
+      rules
+    );
+    Set<SeatAttribute> emptyAttrs = Collections.emptySet();
+    var seat = new Seat(
+      UUID.randomUUID(),
+      venue.getId(),
+      "A",
+      "1",
+      1,
+      SeatCategory.STANDARD,
+      emptyAttrs
+    );
+    var reservation = new Reservation(
+      UUID.randomUUID(),
+      event.getId(),
+      "test@example.com",
+      ReservationStatus.HOLD,
+      Instant.now(),
+      null,
+      Instant.now().plusSeconds(300),
+      List.of(
+        new ReservationSeat(
+          UUID.randomUUID(),
+          seat.getId(),
+          new Money(BigDecimal.ZERO, currency),
+          DiscountType.NONE
+        )
+      )
+    );
 
-        // Save
-        storage.save(List.of(venue), List.of(event), List.of(seat), List.of(reservation));
+    storage.save(
+      List.of(venue),
+      List.of(event),
+      List.of(seat),
+      List.of(reservation)
+    );
+    var ctx = storage.load();
 
-        // Load back
-        var ctx = storage.load();
+    assertThat(ctx.venues).hasSize(1);
+    assertThat(ctx.events).hasSize(1);
+    assertThat(ctx.seats).hasSize(1);
+    assertThat(ctx.reservations).hasSize(1);
 
-        // Assert
-        assertThat(ctx.venues).hasSize(1);
-        assertThat(ctx.events).hasSize(1);
-        assertThat(ctx.seats).hasSize(1);
-        assertThat(ctx.reservations).hasSize(1);
+    var loadedRes = ctx.reservations.get(0);
+    assertThat(loadedRes.getEventId()).isEqualTo(event.getId());
+    assertThat(loadedRes.getStatus()).isEqualTo(ReservationStatus.HOLD);
+  }
 
-        var loadedRes = ctx.reservations.get(0);
-        assertThat(loadedRes.getEventId()).isEqualTo(event.getId());
-        assertThat(loadedRes.getStatus()).isEqualTo(ReservationStatus.HOLD);
+  @Test
+  void loadValidFile_shouldParseCorrectly(@TempDir Path tempDir)
+    throws IOException {
+    var targetPath = tempDir.resolve("data.json");
+    try (
+      var in = getClass().getResourceAsStream("/test-data/valid-state.json")
+    ) {
+      assertThat(in).as("Resource file not found").isNotNull();
+      Files.copy(in, targetPath);
     }
 
-    // ---------- NEW: Load valid file from resources ----------
-    @Test
-    void loadValidFile_shouldParseCorrectly(@TempDir Path tempDir) throws IOException {
-        // Copy the valid-state.json from classpath to a temp file
-        var resourcePath = Path.of("src/test/resources/test-data/valid-state.json");
-        var targetPath = tempDir.resolve("data.json");
+    var storage = new JsonStorage(targetPath.toString());
+    var ctx = storage.load();
 
-        // If running from JAR, use getResourceAsStream. For maven test, this works.
-        try (var in = getClass().getResourceAsStream("/test-data/valid-state.json")) {
-            assertThat(in).as("Resource file not found").isNotNull();
-            Files.copy(in, targetPath);
-        }
+    assertThat(ctx.venues).hasSize(1);
+    assertThat(ctx.events).hasSize(1);
+    assertThat(ctx.seats).hasSize(2);
+    assertThat(ctx.reservations).hasSize(1);
 
-        var storage = new JsonStorage(targetPath.toString());
-        var ctx = storage.load();
+    var venue = ctx.venues.get(0);
+    assertThat(venue.getName()).isEqualTo("Main Hall");
 
-        // Validate loaded data
-        assertThat(ctx.venues).hasSize(1);
-        assertThat(ctx.events).hasSize(1);
-        assertThat(ctx.seats).hasSize(2);
-        assertThat(ctx.reservations).hasSize(1);
+    var event = ctx.events.get(0);
+    assertThat(event.getTitle()).isEqualTo("Rock Concert");
 
-        var venue = ctx.venues.get(0);
-        assertThat(venue.getName()).isEqualTo("Main Hall");
+    var res = ctx.reservations.get(0);
+    assertThat(res.getCustomerEmail()).isEqualTo("customer@example.com");
+    assertThat(res.getStatus()).isEqualTo(ReservationStatus.HOLD);
+    assertThat(res.getSeats()).hasSize(1);
+  }
 
-        var event = ctx.events.get(0);
-        assertThat(event.getTitle()).isEqualTo("Rock Concert");
-
-        var res = ctx.reservations.get(0);
-        assertThat(res.getCustomerEmail()).isEqualTo("customer@example.com");
-        assertThat(res.getStatus()).isEqualTo(ReservationStatus.HOLD);
-        assertThat(res.getSeats()).hasSize(1);
+  @Test
+  void loadCorruptedFile_shouldThrowStorageException(@TempDir Path tempDir)
+    throws IOException {
+    var targetPath = tempDir.resolve("corrupt.json");
+    try (var in = getClass().getResourceAsStream("/test-data/corrupted.json")) {
+      assertThat(in).as("Resource file not found").isNotNull();
+      Files.copy(in, targetPath);
     }
 
-    // ---------- NEW: Load corrupted file should throw StorageException ----------
-    @Test
-    void loadCorruptedFile_shouldThrowStorageException(@TempDir Path tempDir) throws IOException {
-        // Copy the corrupted.json from classpath to a temp file
-        var targetPath = tempDir.resolve("corrupt.json");
-        try (var in = getClass().getResourceAsStream("/test-data/corrupted.json")) {
-            assertThat(in).as("Resource file not found").isNotNull();
-            Files.copy(in, targetPath);
-        }
+    var storage = new JsonStorage(targetPath.toString());
+    assertThatThrownBy(storage::load)
+      .isInstanceOf(StorageException.class)
+      .hasMessageContaining("Failed to load or parse JSON file");
+  }
 
-        var storage = new JsonStorage(targetPath.toString());
-
-        // When we load, a StorageException should be thrown (wrapping the Jackson parse error)
-        assertThatThrownBy(storage::load)
-                .isInstanceOf(StorageException.class)
-                .hasMessageContaining("Failed to load or parse JSON file");
-    }
-
-    // ---------- Load non-existent file should return empty state ----------
-    @Test
-    void loadNonExistentFile_shouldReturnEmpty(@TempDir Path tempDir) {
-        var file = tempDir.resolve("does-not-exist.json").toString();
-        var storage = new JsonStorage(file);
-        var ctx = storage.load();
-
-        assertThat(ctx.venues).isEmpty();
-        assertThat(ctx.events).isEmpty();
-        assertThat(ctx.seats).isEmpty();
-        assertThat(ctx.reservations).isEmpty();
-    }
+  @Test
+  void loadNonExistentFile_shouldReturnEmpty(@TempDir Path tempDir) {
+    var file = tempDir.resolve("does-not-exist.json").toString();
+    var storage = new JsonStorage(file);
+    var ctx = storage.load();
+    assertThat(ctx.venues).isEmpty();
+    assertThat(ctx.events).isEmpty();
+    assertThat(ctx.seats).isEmpty();
+    assertThat(ctx.reservations).isEmpty();
+  }
 }
