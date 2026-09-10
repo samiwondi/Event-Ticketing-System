@@ -213,6 +213,10 @@ public class BookingService {
     return reservationRepository.findByEventId(eventId);
   }
 
+  public List<Reservation> getReservationsByEmail(String email) {
+    return reservationRepository.findByCustomerEmail(email);
+  }
+
   public int getCacheSize() {
     return seatCache.size();
   }

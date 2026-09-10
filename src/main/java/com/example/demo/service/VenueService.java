@@ -15,6 +15,7 @@ import com.example.demo.repository.VenueRepository;
 import com.example.demo.util.IdGenerator;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -38,11 +39,18 @@ public class VenueService {
     this.idGenerator = idGenerator;
   }
 
-  // ----- Venue -----
+  // -----------------------------------------------------------------
+  //  Nested record for section layout
+  // -----------------------------------------------------------------
+  public record SectionLayout(String name, int rows, int seatsPerRow) {}
+
+  // -----------------------------------------------------------------
+  //  Venue
+  // -----------------------------------------------------------------
   public Venue createVenue(String name, String address, String timezone) {
-    if (name == null || name.isBlank()) throw new ValidationException(
-      "Venue name required"
-    );
+    if (name == null || name.isBlank()) {
+      throw new ValidationException("Venue name required");
+    }
     var venue = new Venue(
       idGenerator.generateId(),
       name,
@@ -52,11 +60,62 @@ public class VenueService {
     return venueRepository.save(venue);
   }
 
+  /**
+   * Creates a venue and auto-generates all seats from the given layout.
+   */
+  public Venue createVenueWithSections(
+    String name,
+    String address,
+    String timezone,
+    List<SectionLayout> sections
+  ) {
+    Venue venue = createVenue(name, address, timezone);
+    for (SectionLayout section : sections) {
+      for (int r = 1; r <= section.rows(); r++) {
+        for (int n = 1; n <= section.seatsPerRow(); n++) {
+          Seat seat = new Seat(
+            idGenerator.generateId(),
+            venue.getId(),
+            section.name(),
+            String.valueOf(r),
+            n,
+            SeatCategory.STANDARD,
+            Collections.emptySet()
+          );
+          seatRepository.save(seat);
+        }
+      }
+    }
+    return venue;
+  }
+
+  public Venue updateVenue(
+    UUID venueId,
+    String name,
+    String address,
+    String timezone
+  ) {
+    var venue = venueRepository
+      .findById(venueId)
+      .orElseThrow(() -> new ValidationException("Venue not found"));
+    var updated = new Venue(venue.getId(), name, address, ZoneId.of(timezone));
+    return venueRepository.save(updated);
+  }
+
+  public void deleteVenue(UUID venueId) {
+    if (!venueRepository.existsById(venueId)) {
+      throw new ValidationException("Venue not found");
+    }
+    venueRepository.deleteById(venueId);
+  }
+
   public List<Venue> listVenues() {
     return venueRepository.findAll();
   }
 
-  // ----- Event -----
+  // -----------------------------------------------------------------
+  //  Event
+  // -----------------------------------------------------------------
   public Event createEvent(
     UUID venueId,
     String title,
@@ -66,8 +125,12 @@ public class VenueService {
     Currency currency,
     PricingRules pricingRules
   ) {
-    if (!venueRepository.existsById(venueId)) {
-      throw new ValidationException("Venue not found");
+    Venue venue = venueRepository
+      .findById(venueId)
+      .orElseThrow(() -> new ValidationException("Venue not found"));
+    ZonedDateTime now = ZonedDateTime.now(venue.getTimezone());
+    if (start.isBefore(now)) {
+      throw new ValidationException("Start date/time cannot be in the past.");
     }
     var event = new Event(
       idGenerator.generateId(),
@@ -82,30 +145,51 @@ public class VenueService {
     return eventRepository.save(event);
   }
 
-  public Event createEvent(
-    UUID venueId,
+  public Event updateEvent(
+    UUID eventId,
     String title,
     ZonedDateTime start,
     ZonedDateTime end,
-    Currency currency,
+    EventStatus status,
     PricingRules pricingRules
   ) {
-    return createEvent(
-      venueId,
+    var event = eventRepository
+      .findById(eventId)
+      .orElseThrow(() -> new ValidationException("Event not found"));
+    Venue venue = venueRepository
+      .findById(event.getVenueId())
+      .orElseThrow(() -> new ValidationException("Venue not found"));
+    ZonedDateTime now = ZonedDateTime.now(venue.getTimezone());
+    if (start.isBefore(now)) {
+      throw new ValidationException("Start date/time cannot be in the past.");
+    }
+    var updated = new Event(
+      event.getId(),
+      event.getVenueId(),
       title,
       start,
       end,
-      EventStatus.SCHEDULED,
-      currency,
+      status,
+      event.getCurrency(),
       pricingRules
     );
+    return eventRepository.save(updated);
+  }
+
+  public void deleteEvent(UUID eventId) {
+    if (!eventRepository.existsById(eventId)) {
+      throw new ValidationException("Event not found");
+    }
+    eventRepository.deleteById(eventId);
   }
 
   public List<Event> listEvents() {
     return eventRepository.findAll();
   }
 
-  // ----- Seat -----
+  // -----------------------------------------------------------------
+  //  Seat
+  // -----------------------------------------------------------------
   public Seat createSeat(
     UUID venueId,
     String section,
@@ -127,6 +211,36 @@ public class VenueService {
       attributes
     );
     return seatRepository.save(seat);
+  }
+
+  public Seat updateSeat(
+    UUID seatId,
+    String section,
+    String row,
+    int number,
+    SeatCategory category,
+    Set<SeatAttribute> attributes
+  ) {
+    var seat = seatRepository
+      .findById(seatId)
+      .orElseThrow(() -> new ValidationException("Seat not found"));
+    var updated = new Seat(
+      seat.getId(),
+      seat.getVenueId(),
+      section,
+      row,
+      number,
+      category,
+      attributes
+    );
+    return seatRepository.save(updated);
+  }
+
+  public void deleteSeat(UUID seatId) {
+    if (!seatRepository.existsById(seatId)) {
+      throw new ValidationException("Seat not found");
+    }
+    seatRepository.deleteById(seatId);
   }
 
   public List<Seat> listSeatsByVenue(UUID venueId) {

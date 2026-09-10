@@ -1,11 +1,13 @@
 package com.example.demo.cli;
 
 import com.example.demo.domain.Event;
-import com.example.demo.domain.PricingRules;
 import com.example.demo.domain.Reservation;
-import com.example.demo.domain.ReservationSeat;
 import com.example.demo.domain.Seat;
 import com.example.demo.domain.Venue;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Scanner;
 import java.util.UUID;
@@ -18,12 +20,10 @@ public class MenuRenderer {
     System.out.println("\n========== Ticketing System ==========");
     System.out.println("1. Venue Management");
     System.out.println("2. Event Management");
-    System.out.println("3. Seat Management");
-    System.out.println("4. Reservation Management");
-    System.out.println("5. Reports");
-    System.out.println("6. Save / Load");
-    System.out.println("7. System Status");
-    System.out.println("8. Exit");
+    System.out.println("3. Reservation Management");
+    System.out.println("4. Reports");
+    System.out.println("5. System Status");
+    System.out.println("6. Exit");
     System.out.println("=======================================");
     System.out.print("Select option: ");
   }
@@ -32,7 +32,9 @@ public class MenuRenderer {
     System.out.println("\n========== Venue Management ==========");
     System.out.println("1. List all venues");
     System.out.println("2. Create new venue");
-    System.out.println("3. Back to main menu");
+    System.out.println("3. Update venue");
+    System.out.println("4. Delete venue");
+    System.out.println("5. Back to main menu");
     System.out.println("=======================================");
     System.out.print("Select option: ");
   }
@@ -43,17 +45,9 @@ public class MenuRenderer {
     System.out.println("2. Create new event");
     System.out.println("3. View event details");
     System.out.println("4. List seats for event");
-    System.out.println("5. Back to main menu");
-    System.out.println("=======================================");
-    System.out.print("Select option: ");
-  }
-
-  public void printSeatMenu() {
-    System.out.println("\n========== Seat Management ==========");
-    System.out.println("1. List seats for venue");
-    System.out.println("2. Create new seat");
-    System.out.println("3. Bulk import seats from CSV (placeholder)");
-    System.out.println("4. Back to main menu");
+    System.out.println("5. Update event");
+    System.out.println("6. Delete event");
+    System.out.println("7. Back to main menu");
     System.out.println("=======================================");
     System.out.print("Select option: ");
   }
@@ -80,15 +74,6 @@ public class MenuRenderer {
     System.out.print("Select option: ");
   }
 
-  public void printSaveLoadMenu() {
-    System.out.println("\n========== Save / Load ==========");
-    System.out.println("1. Save state to JSON");
-    System.out.println("2. Load state from JSON");
-    System.out.println("3. Back to main menu");
-    System.out.println("==================================");
-    System.out.print("Select option: ");
-  }
-
   public void printStatusMenu() {
     System.out.println("\n========== System Status ==========");
     System.out.println("1. Show full status");
@@ -97,44 +82,176 @@ public class MenuRenderer {
     System.out.print("Select option: ");
   }
 
+  // --------------------------------------------------------------
+  //  INPUT HELPERS
+  // --------------------------------------------------------------
   public String readLine() {
     return scanner.nextLine().trim();
   }
 
-  public int readInt() {
-    try {
-      return Integer.parseInt(scanner.nextLine().trim());
-    } catch (NumberFormatException e) {
-      return -1;
+  public int readInt(String prompt) {
+    while (true) {
+      System.out.print(prompt);
+      String input = scanner.nextLine().trim();
+      try {
+        return Integer.parseInt(input);
+      } catch (NumberFormatException e) {
+        System.out.println("Invalid input. Please enter a number.");
+      }
     }
   }
 
-  public UUID readUUID() {
-    String input = scanner.nextLine().trim();
-    if (input.isEmpty()) return null;
-    try {
-      return UUID.fromString(input);
-    } catch (IllegalArgumentException e) {
-      return null;
+  public int readInt(String prompt, int min, int max) {
+    while (true) {
+      int value = readInt(prompt);
+      if (value >= min && value <= max) return value;
+      System.out.println(
+        "Please enter a number between " + min + " and " + max + "."
+      );
     }
   }
 
-  // --- Print lists ---
+  public LocalDate readLocalDate(String prompt) {
+    while (true) {
+      System.out.print(prompt);
+      String input = scanner.nextLine().trim();
+      try {
+        return LocalDate.parse(input);
+      } catch (DateTimeParseException e) {
+        System.out.println(
+          "Invalid date format. Please use yyyy-MM-dd (e.g., 2026-09-15)."
+        );
+      }
+    }
+  }
 
+  public LocalTime readLocalTime(String prompt) {
+    while (true) {
+      System.out.print(prompt);
+      String input = scanner.nextLine().trim();
+      try {
+        return LocalTime.parse(input);
+      } catch (DateTimeParseException e) {
+        System.out.println(
+          "Invalid time format. Please use HH:mm (e.g., 20:00)."
+        );
+      }
+    }
+  }
+
+  public boolean readYesNo(String prompt) {
+    while (true) {
+      System.out.print(prompt + " (y/n): ");
+      String input = scanner.nextLine().trim().toLowerCase();
+      if (input.equals("y") || input.equals("yes")) return true;
+      if (input.equals("n") || input.equals("no")) return false;
+      System.out.println("Please enter 'y' or 'n'.");
+    }
+  }
+
+  public UUID readUUID(String prompt) {
+    while (true) {
+      System.out.print(prompt);
+      String input = scanner.nextLine().trim();
+      if (input.isEmpty()) {
+        System.out.println("Input cannot be empty.");
+        continue;
+      }
+      try {
+        return UUID.fromString(input);
+      } catch (IllegalArgumentException e) {
+        System.out.println("Invalid UUID format. Please enter a valid UUID.");
+      }
+    }
+  }
+
+  /**
+   * Reads and validates an email address using a simple regex.
+   */
+  public String readEmail(String prompt) {
+    while (true) {
+      System.out.print(prompt);
+      String input = scanner.nextLine().trim();
+      if (input.matches("^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$")) {
+        return input;
+      }
+      System.out.println(
+        "Invalid email format. Please enter a valid email (e.g., user@example.com)."
+      );
+    }
+  }
+
+  public void pressEnterToContinue() {
+    System.out.print("Press Enter to continue...");
+    scanner.nextLine();
+  }
+
+  // --------------------------------------------------------------
+  //  SELECTION PRINT METHODS
+  // --------------------------------------------------------------
+  public int printAndSelectVenues(List<Venue> venues) {
+    System.out.println("\nSelect a venue:");
+    System.out.println("0. Cancel");
+    for (int i = 0; i < venues.size(); i++) {
+      Venue v = venues.get(i);
+      System.out.println(
+        (i + 1) + ". " + v.getName() + " (" + v.getAddress() + ")"
+      );
+    }
+    return readInt("Enter choice: ", 0, venues.size());
+  }
+
+  public int printAndSelectEvents(List<Event> events) {
+    System.out.println("\nSelect an event:");
+    System.out.println("0. Cancel");
+    DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+    DateTimeFormatter timeFormatter = DateTimeFormatter.ofPattern("HH:mm");
+    for (int i = 0; i < events.size(); i++) {
+      Event e = events.get(i);
+      String startDate = e.getStartAt().format(dateFormatter);
+      String startTime = e.getStartAt().format(timeFormatter);
+      String endTime = e.getEndAt().format(timeFormatter);
+      System.out.printf(
+        "%d. %s | %s %s – %s%n",
+        i + 1,
+        e.getTitle(),
+        startDate,
+        startTime,
+        endTime
+      );
+    }
+    return readInt("Enter choice: ", 0, events.size());
+  }
+
+  public int printAndSelectSeats(List<Seat> seats) {
+    System.out.println("\nSelect a seat:");
+    System.out.println("0. Cancel");
+    for (int i = 0; i < seats.size(); i++) {
+      Seat s = seats.get(i);
+      System.out.printf(
+        "%d. Section: %s, Row: %s, Number: %d (Category: %s)%n",
+        i + 1,
+        s.getSection(),
+        s.getRow(),
+        s.getNumber(),
+        s.getCategory()
+      );
+    }
+    return readInt("Enter choice: ", 0, seats.size());
+  }
+
+  // --------------------------------------------------------------
+  //  PRINT METHODS
+  // --------------------------------------------------------------
   public void printVenues(List<Venue> venues) {
     if (venues.isEmpty()) {
       System.out.println("No venues found.");
       return;
     }
-    int index = 1;
     System.out.println("\n========== Venues ==========");
-    for (Venue v : venues) {
-      System.out.printf(
-        "%d | Name: %s | Address: %s%n",
-        index++,
-        v.getName(),
-        v.getAddress()
-      );
+    for (int i = 0; i < venues.size(); i++) {
+      Venue v = venues.get(i);
+      System.out.printf("%d. %s (%s)%n", i + 1, v.getName(), v.getAddress());
     }
     System.out.println("============================");
   }
@@ -145,11 +262,17 @@ public class MenuRenderer {
       return;
     }
     System.out.println("\n========== Events ==========");
-    for (Event e : events) {
+    DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+    DateTimeFormatter timeFormatter = DateTimeFormatter.ofPattern("HH:mm");
+    for (int i = 0; i < events.size(); i++) {
+      Event e = events.get(i);
       System.out.printf(
-        "Title: %s | Start: %s%n",
+        "%d. %s | %s %s – %s%n",
+        i + 1,
         e.getTitle(),
-        e.getStartAt()
+        e.getStartAt().format(dateFormatter),
+        e.getStartAt().format(timeFormatter),
+        e.getEndAt().format(timeFormatter)
       );
     }
     System.out.println("============================");
@@ -161,10 +284,11 @@ public class MenuRenderer {
       return;
     }
     System.out.println("\n========== Seats ==========");
-    for (Seat s : seats) {
+    for (int i = 0; i < seats.size(); i++) {
+      Seat s = seats.get(i);
       System.out.printf(
-        "ID: %s | Section: %s | Row: %s | Number: %d | Category: %s%n",
-        s.getId(),
+        "%d. Section: %s, Row: %s, Number: %d (Category: %s)%n",
+        i + 1,
         s.getSection(),
         s.getRow(),
         s.getNumber(),
@@ -180,72 +304,33 @@ public class MenuRenderer {
       return;
     }
     System.out.println("\n========== Reservations ==========");
-    for (Reservation r : reservations) {
+    for (int i = 0; i < reservations.size(); i++) {
+      Reservation r = reservations.get(i);
+
+      // Compute total price from all seats in this reservation
+      var seats = r.getSeats();
+      java.math.BigDecimal total = java.math.BigDecimal.ZERO;
+      String currencySymbol = "";
+      for (var rs : seats) {
+        total = total.add(rs.price().amount());
+        if (currencySymbol.isEmpty()) {
+          currencySymbol = rs.price().currency().getSymbol();
+        }
+      }
+
       System.out.printf(
-        "ID: %s | Event: %s | Email: %s | Status: %s | Seats: %d%n",
-        r.getId(),
+        "%d. Event: %s | Email: %s | Status: %s | Seats: %d | Total: %s %s%n",
+        i + 1,
         r.getEventId(),
         r.getCustomerEmail(),
         r.getStatus(),
-        r.getSeats().size()
+        seats.size(),
+        currencySymbol,
+        total
       );
     }
     System.out.println("==================================");
   }
-
-  // --- Print detailed objects ---
-
-  public void printEventDetails(Event event) {
-    System.out.println("\n========== Event Details ==========");
-    System.out.println("ID: " + event.getId());
-    System.out.println("Venue ID: " + event.getVenueId());
-    System.out.println("Title: " + event.getTitle());
-    System.out.println("Start: " + event.getStartAt());
-    System.out.println("End: " + event.getEndAt());
-    System.out.println("Status: " + event.getStatus());
-    PricingRules rules = event.getPricingRules();
-    System.out.println("Currency: " + rules.currency());
-    System.out.println("Default price: " + rules.defaultPrice());
-    System.out.println("Category prices: " + rules.categoryPrices());
-    System.out.println("====================================");
-  }
-
-  public void printSeatDetails(Seat seat) {
-    System.out.println("\n========== Seat Details ==========");
-    System.out.println("ID: " + seat.getId());
-    System.out.println("Venue ID: " + seat.getVenueId());
-    System.out.println("Section: " + seat.getSection());
-    System.out.println("Row: " + seat.getRow());
-    System.out.println("Number: " + seat.getNumber());
-    System.out.println("Category: " + seat.getCategory());
-    System.out.println("Attributes: " + seat.getAttributes());
-    System.out.println("==================================");
-  }
-
-  public void printReservationDetails(Reservation reservation) {
-    System.out.println("\n========== Reservation Details ==========");
-    System.out.println("ID: " + reservation.getId());
-    System.out.println("Event ID: " + reservation.getEventId());
-    System.out.println("Customer Email: " + reservation.getCustomerEmail());
-    System.out.println("Status: " + reservation.getStatus());
-    System.out.println("Created At: " + reservation.getCreatedAt());
-    System.out.println(
-      "Confirmed At: " + reservation.getConfirmedAt().orElse(null)
-    );
-    System.out.println("Hold Expires At: " + reservation.getHoldExpiresAt());
-    System.out.println("Seats (" + reservation.getSeats().size() + "):");
-    for (ReservationSeat rs : reservation.getSeats()) {
-      System.out.printf(
-        "  - Seat ID: %s | Price: %s | Discount: %s%n",
-        rs.seatId(),
-        rs.price(),
-        rs.discount()
-      );
-    }
-    System.out.println("===========================================");
-  }
-
-  // --- Utilities ---
 
   public void printStatus(
     boolean sweeperRunning,
@@ -275,10 +360,5 @@ public class MenuRenderer {
 
   public void printReport(String report) {
     System.out.println(report);
-  }
-
-  public void pressEnterToContinue() {
-    System.out.print("Press Enter to continue...");
-    scanner.nextLine();
   }
 }

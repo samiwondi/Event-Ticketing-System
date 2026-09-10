@@ -98,9 +98,8 @@ public class Event {
       setTimes(newStartTime, newStartTime.plus(duration));
       return;
     }
-    // For other transitions (CANCELLED, etc.) use enum transition logic
+    // For other transitions, use enum transition logic
     this.status = this.status.transitionTo(target);
-    // Don't override CANCELLED or COMPLETED
     if (target != EventStatus.CANCELLED && target != EventStatus.COMPLETED) {
       autoStatus();
     }

@@ -15,7 +15,7 @@ public enum DiscountType {
     public BigDecimal apply(BigDecimal price) {
       return price
         .multiply(BigDecimal.valueOf(0.9))
-        .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
+        .setScale(2, RoundingMode.HALF_UP);
     }
   },
   FIXED_5 {
