@@ -1,57 +1,42 @@
 package com.example.demo.service;
 
 import com.example.demo.domain.Reservation;
+import com.example.demo.enums.ReservationStatus;
+import com.example.demo.repository.jpa.ReservationJpaRepository;
 import java.time.Instant;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.List;
+import org.springframework.context.annotation.Profile;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
+@Component
+@Profile("!cli")
 public class HoldExpirySweeper {
 
+  private final ReservationJpaRepository reservationRepo;
   private final BookingService bookingService;
-  private final ScheduledExecutorService scheduler =
-    Executors.newSingleThreadScheduledExecutor();
-  private final AtomicBoolean running = new AtomicBoolean(false);
 
-  public HoldExpirySweeper(BookingService bookingService) {
+  public HoldExpirySweeper(
+    ReservationJpaRepository reservationRepo,
+    BookingService bookingService
+  ) {
+    this.reservationRepo = reservationRepo;
     this.bookingService = bookingService;
   }
 
-  public void start() {
-    if (running.compareAndSet(false, true)) {
-      scheduler.scheduleAtFixedRate(this::sweep, 0, 2, TimeUnit.SECONDS);
-      System.out.println("Hold expiry sweeper started.");
-    }
-  }
-
-  public void stop() {
-    if (running.compareAndSet(true, false)) {
-      scheduler.shutdown();
-      try {
-        if (!scheduler.awaitTermination(2, TimeUnit.SECONDS)) {
-          scheduler.shutdownNow();
-        }
-      } catch (InterruptedException e) {
-        Thread.currentThread().interrupt();
-      }
-      System.out.println("Hold expiry sweeper stopped.");
-    }
-  }
-
-  public boolean isRunning() {
-    return running.get();
-  }
-
-  private void sweep() {
+  @Scheduled(fixedRate = 5000)
+  @Transactional
+  public void sweep() {
     try {
-      var holds = bookingService.getAllHolds();
-      Instant now = Instant.now();
-      for (Reservation res : holds) {
-        if (res.getHoldExpiresAt().isBefore(now)) {
-          bookingService.expireReservation(res.getId());
-          System.out.println("Expired hold cancelled: " + res.getId());
-        }
+      List<Reservation> expired =
+        reservationRepo.findByStatusAndHoldExpiresAtBefore(
+          ReservationStatus.HOLD,
+          Instant.now()
+        );
+      for (Reservation r : expired) {
+        bookingService.expire(r.getId());
+        System.out.println("Expired hold cancelled: " + r.getId());
       }
     } catch (Exception e) {
       System.err.println("Error during sweep: " + e.getMessage());

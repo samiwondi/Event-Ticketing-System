@@ -2,114 +2,81 @@ package com.example.demo.domain;
 
 import com.example.demo.enums.Currency;
 import com.example.demo.enums.EventStatus;
-import java.time.Duration;
-import java.time.ZonedDateTime;
-import java.util.Objects;
+import jakarta.persistence.*;
+import java.time.Instant;
 import java.util.UUID;
+import org.hibernate.annotations.CreationTimestamp;
 
+@Entity
+@Table(
+  name = "events",
+  uniqueConstraints = @UniqueConstraint(
+    name = "uq_event_venue_title_start",
+    columnNames = { "venue_id", "title", "start_at" }
+  )
+)
 public class Event {
 
-  private final UUID id;
-  private final UUID venueId;
-  private final String title;
-  private ZonedDateTime startAt;
-  private ZonedDateTime endAt;
+  @Id
+  private UUID id;
+
+  @Column(name = "venue_id", nullable = false)
+  private UUID venueId;
+
+  @Column(nullable = false)
+  private String title;
+
+  @Column(name = "start_at", nullable = false)
+  private Instant startAt;
+
+  @Column(name = "end_at", nullable = false)
+  private Instant endAt;
+
+  @Enumerated(EnumType.STRING)
+  @Column(nullable = false, length = 30)
   private EventStatus status;
-  private final Currency currency;
-  private final PricingRules pricingRules;
+
+  @Enumerated(EnumType.STRING)
+  @Column(nullable = false, length = 10)
+  private Currency currency;
+
+  @Embedded
+  private PricingRules pricingRules;
+
+  @Version
+  private int version;
+
+  @CreationTimestamp
+  @Column(name = "created_at", updatable = false)
+  private Instant createdAt;
+
+  protected Event() {}
 
   public Event(
     UUID id,
     UUID venueId,
     String title,
-    ZonedDateTime startAt,
-    ZonedDateTime endAt,
+    Instant startAt,
+    Instant endAt,
     EventStatus status,
     Currency currency,
     PricingRules pricingRules
   ) {
-    this.id = Objects.requireNonNull(id);
-    this.venueId = Objects.requireNonNull(venueId);
-    this.title = Objects.requireNonNull(title);
-    setTimes(startAt, endAt);
-    this.status = status != null ? status : EventStatus.SCHEDULED;
-
-    if (currency == null) {
-      throw new IllegalArgumentException("Currency must not be null");
-    }
-    if (pricingRules == null) {
-      this.pricingRules = PricingRules.defaultRules(currency);
-    } else {
-      if (pricingRules.currency() != currency) {
-        throw new IllegalArgumentException(
-          "Currency mismatch: event currency does not match pricing rules currency"
-        );
-      }
-      this.pricingRules = pricingRules;
-    }
-    this.currency = currency;
-    autoStatus();
-  }
-
-  private void setTimes(ZonedDateTime startAt, ZonedDateTime endAt) {
-    if (startAt == null || endAt == null) {
-      throw new IllegalArgumentException(
-        "Start and end times must not be null"
-      );
-    }
-    if (startAt.isAfter(endAt)) {
-      throw new IllegalArgumentException("Start must be before end");
-    }
+    this.id = id;
+    this.venueId = venueId;
+    this.title = title;
     this.startAt = startAt;
     this.endAt = endAt;
+    this.status = status;
+    this.currency = currency;
+    this.pricingRules = pricingRules;
   }
 
-  public void autoStatus() {
-    ZonedDateTime now = ZonedDateTime.now();
-    if (status == EventStatus.CANCELLED || status == EventStatus.COMPLETED) {
-      return;
-    }
-    if (startAt.isAfter(now)) {
-      this.status = EventStatus.SCHEDULED;
-    } else if (startAt.isBefore(now) && endAt.isAfter(now)) {
-      this.status = EventStatus.IN_PROGRESS;
-    } else if (endAt.isBefore(now)) {
-      this.status = EventStatus.COMPLETED;
-    }
+  @PrePersist
+  void prePersist() {
+    if (id == null) id = UUID.randomUUID();
   }
 
-  public void manualStatus(EventStatus target, ZonedDateTime newStartTime) {
-    if (target == null) {
-      throw new IllegalArgumentException("Target status cannot be null");
-    }
-    if (target == EventStatus.POSTPONED) {
-      if (newStartTime == null) {
-        throw new IllegalArgumentException(
-          "New start time required for postponement"
-        );
-      }
-      if (newStartTime.isBefore(ZonedDateTime.now())) {
-        throw new IllegalArgumentException(
-          "Postponed Event must be in the future."
-        );
-      }
-      Duration duration = Duration.between(this.startAt, this.endAt);
-      this.status = target;
-      setTimes(newStartTime, newStartTime.plus(duration));
-      return;
-    }
-    // For other transitions, use enum transition logic
-    this.status = this.status.transitionTo(target);
-    if (target != EventStatus.CANCELLED && target != EventStatus.COMPLETED) {
-      autoStatus();
-    }
-  }
-
-  public boolean isSoldOut(int totalSeats, int reservedSeats) {
-    return reservedSeats >= totalSeats;
-  }
-
-  // ------ Getters ------
   public UUID getId() {
     return id;
   }
@@ -122,11 +89,11 @@ public class Event {
     return title;
   }
 
-  public ZonedDateTime getStartAt() {
+  public Instant getStartAt() {
     return startAt;
   }
 
-  public ZonedDateTime getEndAt() {
+  public Instant getEndAt() {
     return endAt;
   }
 
@@ -140,23 +107,5 @@ public class Event {
 
   public PricingRules getPricingRules() {
     return pricingRules;
-  }
-
-  // ------ equals / hashCode / toString ------
-  @Override
-  public boolean equals(Object o) {
-    if (this == o) return true;
-    if (!(o instanceof Event event)) return false;
-    return Objects.equals(id, event.id);
-  }
-
-  @Override
-  public int hashCode() {
-    return Objects.hash(id);
-  }
-
-  @Override
-  public String toString() {
-    return "Event{id=" + id + ", title='" + title + "', status=" + status + "}";
   }
 }

@@ -1,235 +1,178 @@
 package com.example.demo.service;
 
-import com.example.demo.cache.SeatAvailabilityCache;
+import com.example.demo.domain.Event;
 import com.example.demo.domain.Money;
 import com.example.demo.domain.Reservation;
 import com.example.demo.domain.ReservationSeat;
+import com.example.demo.domain.Seat;
 import com.example.demo.enums.DiscountType;
 import com.example.demo.enums.ReservationStatus;
-import com.example.demo.exception.InvalidSeatException;
-import com.example.demo.exception.ReservationException;
-import com.example.demo.exception.ValidationException;
-import com.example.demo.repository.EventRepository;
-import com.example.demo.repository.ReservationRepository;
-import com.example.demo.repository.SeatRepository;
-import com.example.demo.util.IdGenerator;
+import com.example.demo.enums.SeatCategory;
+import com.example.demo.exception.ConflictException;
+import com.example.demo.exception.ResourceNotFoundException;
+import com.example.demo.repository.jpa.EventJpaRepository;
+import com.example.demo.repository.jpa.ReservationJpaRepository;
+import com.example.demo.repository.jpa.SeatJpaRepository;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Transactional;
 
+@Service
 public class BookingService {
 
-  private final ReservationRepository reservationRepository;
-  private final EventRepository eventRepository;
-  private final SeatRepository seatRepository;
-  private final PricingService pricingService;
-  private final IdGenerator idGenerator;
-  private final Duration holdDuration = Duration.ofMinutes(5);
+  private static final Duration HOLD_DURATION = Duration.ofMinutes(5);
 
-  private final ConcurrentHashMap<UUID, ReentrantLock> eventLocks =
-    new ConcurrentHashMap<>();
-  private final SeatAvailabilityCache seatCache;
+  private final EventJpaRepository eventRepo;
+  private final SeatJpaRepository seatRepo;
+  private final ReservationJpaRepository reservationRepo;
 
   public BookingService(
-    ReservationRepository reservationRepository,
-    EventRepository eventRepository,
-    SeatRepository seatRepository,
-    PricingService pricingService,
-    IdGenerator idGenerator
+    EventJpaRepository eventRepo,
+    SeatJpaRepository seatRepo,
+    ReservationJpaRepository reservationRepo
   ) {
-    this.reservationRepository = reservationRepository;
-    this.eventRepository = eventRepository;
-    this.seatRepository = seatRepository;
-    this.pricingService = pricingService;
-    this.idGenerator = idGenerator;
-    this.seatCache = new SeatAvailabilityCache(seatRepository, 100);
+    this.eventRepo = eventRepo;
+    this.seatRepo = seatRepo;
+    this.reservationRepo = reservationRepo;
   }
 
-  public Reservation holdSeats(
-    UUID eventId,
-    String customerEmail,
-    List<UUID> seatIds
-  ) {
-    ReentrantLock lock = eventLocks.computeIfAbsent(eventId, k ->
-      new ReentrantLock(true)
-    );
-    lock.lock();
-    try {
-      var event = eventRepository
-        .findById(eventId)
-        .orElseThrow(() -> new ValidationException("Event not found"));
-
-      var allSeats = seatCache.getSeatsForEvent(eventId, event.getVenueId());
-      var seats = seatIds
-        .stream()
-        .map(id ->
-          allSeats
-            .stream()
-            .filter(s -> s.getId().equals(id))
-            .findFirst()
-            .orElseThrow(() ->
-              new InvalidSeatException(
-                "Seat " + id + " not found in this venue"
-              )
-            )
-        )
-        .collect(Collectors.toList());
-
-      var reservationsForEvent = reservationRepository.findByEventId(eventId);
-      var reservedSeatIds = reservationsForEvent
-        .stream()
-        .flatMap(r -> r.getSeats().stream().map(ReservationSeat::seatId))
-        .collect(Collectors.toSet());
-
-      var conflictingSeats = seatIds
-        .stream()
-        .filter(reservedSeatIds::contains)
-        .collect(Collectors.toList());
-      if (!conflictingSeats.isEmpty()) {
-        throw new ReservationException(
-          "Seats already reserved: " + conflictingSeats
-        );
-      }
-
-      var reservationId = idGenerator.generateId();
-      var now = Instant.now();
-      var holdExpires = now.plus(holdDuration);
-
-      var reservationSeats = seats
-        .stream()
-        .map(seat -> {
-          Money price = pricingService.calculatePrice(event, seat);
-          return new ReservationSeat(
-            reservationId,
-            seat.getId(),
-            price,
-            DiscountType.NONE
-          );
-        })
-        .collect(Collectors.toList());
-
-      var reservation = new Reservation(
-        reservationId,
-        eventId,
-        customerEmail,
-        ReservationStatus.HOLD,
-        now,
-        null,
-        holdExpires,
-        reservationSeats
+  // ------------------------------------------------------------------
+  //  Core booking flow
+  // ------------------------------------------------------------------
+  @Transactional(isolation = Isolation.SERIALIZABLE)
+  public Reservation hold(UUID eventId, String email, List<UUID> seatIds) {
+    Event event = eventRepo
+      .findById(eventId)
+      .orElseThrow(() ->
+        new ResourceNotFoundException("Event not found: " + eventId)
       );
 
-      Reservation saved = reservationRepository.save(reservation);
-      seatCache.invalidate(eventId);
-      return saved;
-    } finally {
-      lock.unlock();
+    List<Seat> seats = seatRepo.findAllById(seatIds);
+    if (seats.size() != seatIds.size()) {
+      throw new ResourceNotFoundException("One or more seats not found");
     }
-  }
 
-  public void confirmReservation(UUID reservationId) {
-    var reservation = reservationRepository
-      .findById(reservationId)
-      .orElseThrow(() -> new ValidationException("Reservation not found"));
-    if (reservation.getStatus() == ReservationStatus.CONFIRMED) return;
-    UUID eventId = reservation.getEventId();
-    ReentrantLock lock = eventLocks.computeIfAbsent(eventId, k ->
-      new ReentrantLock(true)
-    );
-    lock.lock();
-    try {
-      var res = reservationRepository
-        .findById(reservationId)
-        .orElseThrow(() -> new ValidationException("Reservation not found"));
-      if (res.getStatus() == ReservationStatus.CONFIRMED) return;
-      res.confirm();
-      reservationRepository.save(res);
-      seatCache.invalidate(eventId);
-    } finally {
-      lock.unlock();
-    }
-  }
-
-  public void cancelReservation(UUID reservationId) {
-    var reservation = reservationRepository
-      .findById(reservationId)
-      .orElseThrow(() -> new ValidationException("Reservation not found"));
-    if (reservation.getStatus() == ReservationStatus.CANCELLED) return;
-    UUID eventId = reservation.getEventId();
-    ReentrantLock lock = eventLocks.computeIfAbsent(eventId, k ->
-      new ReentrantLock(true)
-    );
-    lock.lock();
-    try {
-      var res = reservationRepository
-        .findById(reservationId)
-        .orElseThrow(() -> new ValidationException("Reservation not found"));
-      if (res.getStatus() == ReservationStatus.CANCELLED) return;
-      res.cancel();
-      reservationRepository.save(res);
-      seatCache.invalidate(eventId);
-    } finally {
-      lock.unlock();
-    }
-  }
-
-  public void expireReservation(UUID reservationId) {
-    var reservation = reservationRepository
-      .findById(reservationId)
-      .orElseThrow(() -> new ValidationException("Reservation not found"));
-    if (reservation.getStatus() != ReservationStatus.HOLD) return; // only HOLD can expire
-    UUID eventId = reservation.getEventId();
-    ReentrantLock lock = eventLocks.computeIfAbsent(eventId, k ->
-      new ReentrantLock(true)
-    );
-    lock.lock();
-    try {
-      var res = reservationRepository
-        .findById(reservationId)
-        .orElseThrow(() -> new ValidationException("Reservation not found"));
-      if (res.getStatus() == ReservationStatus.HOLD) {
-        res.expire();
-        reservationRepository.save(res);
-        seatCache.invalidate(eventId);
+    for (Seat s : seats) {
+      if (!s.getVenueId().equals(event.getVenueId())) {
+        throw new ConflictException(
+          "Seat " + s.getId() + " does not belong to this event's venue"
+        );
       }
-    } finally {
-      lock.unlock();
     }
+
+    Set<UUID> alreadyReserved = reservationRepo
+      .findByEventId(eventId)
+      .stream()
+      .filter(
+        r ->
+          r.getStatus() == ReservationStatus.HOLD ||
+          r.getStatus() == ReservationStatus.CONFIRMED
+      )
+      .flatMap(r -> r.getSeats().stream())
+      .map(ReservationSeat::getSeatId)
+      .collect(Collectors.toSet());
+
+    List<UUID> conflicts = seatIds
+      .stream()
+      .filter(alreadyReserved::contains)
+      .toList();
+    if (!conflicts.isEmpty()) {
+      throw new ConflictException("Seats already reserved: " + conflicts);
+    }
+
+    Reservation res = new Reservation(
+      UUID.randomUUID(),
+      eventId,
+      email,
+      ReservationStatus.HOLD,
+      Instant.now().plus(HOLD_DURATION)
+    );
+
+    for (Seat seat : seats) {
+      SeatCategory cat = event
+        .getPricingRules()
+        .getCategoryForSection(seat.getSection());
+      Money price = event.getPricingRules().getPriceForCategory(cat);
+      res.addSeat(
+        new ReservationSeat(seat.getId(), eventId, price, DiscountType.NONE)
+      );
+    }
+
+    return reservationRepo.save(res);
   }
 
+  @Transactional
+  public Reservation confirm(UUID reservationId) {
+    Reservation r = reservationRepo
+      .findById(reservationId)
+      .orElseThrow(() ->
+        new ResourceNotFoundException("Reservation not found")
+      );
+    if (r.getStatus() == ReservationStatus.CONFIRMED) return r; // idempotent
+    if (r.getStatus() != ReservationStatus.HOLD) {
+      throw new ConflictException(
+        "Cannot confirm reservation in status " + r.getStatus()
+      );
+    }
+    if (r.getHoldExpiresAt().isBefore(Instant.now())) {
+      throw new ConflictException("Hold has expired");
+    }
+    r.confirm();
+    return reservationRepo.save(r);
+  }
+
+  @Transactional
+  public Reservation cancel(UUID reservationId) {
+    Reservation r = reservationRepo
+      .findById(reservationId)
+      .orElseThrow(() ->
+        new ResourceNotFoundException("Reservation not found")
+      );
+    if (r.getStatus() == ReservationStatus.CANCELLED) return r; // idempotent
+    if (r.getStatus() == ReservationStatus.EXPIRED) {
+      throw new ConflictException("Cannot cancel an expired reservation");
+    }
+    r.cancel();
+    return reservationRepo.save(r);
+  }
+
+  // ------------------------------------------------------------------
+  //  Extra methods for the CLI
+  // ------------------------------------------------------------------
+  @Transactional(readOnly = true)
+  public List<Reservation> getReservationsForEvent(UUID eventId) {
+    return reservationRepo.findByEventId(eventId);
+  }
+
+  @Transactional(readOnly = true)
+  public List<Reservation> getReservationsByEmail(String email) {
+    return reservationRepo.findByCustomerEmailIgnoreCase(email);
+  }
+
+  @Transactional(readOnly = true)
   public List<Reservation> getAllHolds() {
-    return reservationRepository
+    return reservationRepo
       .findAll()
       .stream()
       .filter(r -> r.getStatus() == ReservationStatus.HOLD)
-      .collect(Collectors.toList());
+      .toList();
   }
 
-  public List<Reservation> getReservationsForEvent(UUID eventId) {
-    return reservationRepository.findByEventId(eventId);
-  }
-
-  public List<Reservation> getReservationsByEmail(String email) {
-    return reservationRepository.findByCustomerEmail(email);
-  }
-
-  public int getCacheSize() {
-    return seatCache.size();
-  }
-
-  public int getLockedEventCount() {
-    int count = 0;
-    for (ReentrantLock lock : eventLocks.values()) {
-      if (lock.isLocked()) count++;
-    }
-    return count;
-  }
-
-  public void clearCache() {
-    seatCache.clear();
+  @Transactional
+  public Reservation expire(UUID reservationId) {
+    Reservation r = reservationRepo
+      .findById(reservationId)
+      .orElseThrow(() ->
+        new ResourceNotFoundException("Reservation not found")
+      );
+    if (r.getStatus() != ReservationStatus.HOLD) return r;
+    r.expire();
+    return reservationRepo.save(r);
   }
 }

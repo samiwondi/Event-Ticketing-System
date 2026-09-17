@@ -16,15 +16,20 @@ public class MenuRenderer {
 
   private final Scanner scanner = new Scanner(System.in);
 
+  // -------- Menus --------
   public void printMainMenu() {
-    System.out.println("\n========== Ticketing System ==========");
+    System.out.println(
+      "\n========== Ticketing System (CLI on PostgreSQL) =========="
+    );
     System.out.println("1. Venue Management");
     System.out.println("2. Event Management");
     System.out.println("3. Reservation Management");
     System.out.println("4. Reports");
     System.out.println("5. System Status");
     System.out.println("6. Exit");
-    System.out.println("=======================================");
+    System.out.println(
+      "=========================================================="
+    );
     System.out.print("Select option: ");
   }
 
@@ -82,9 +87,7 @@ public class MenuRenderer {
     System.out.print("Select option: ");
   }
 
-  // --------------------------------------------------------------
-  //  INPUT HELPERS
-  // --------------------------------------------------------------
+  // -------- Input helpers (retry on invalid, skip blank lines) --------
   public String readLine() {
     return scanner.nextLine().trim();
   }
@@ -92,9 +95,10 @@ public class MenuRenderer {
   public int readInt(String prompt) {
     while (true) {
       System.out.print(prompt);
-      String input = scanner.nextLine().trim();
+      String in = scanner.nextLine().trim();
+      if (in.isEmpty()) continue; // skip stray Enters silently
       try {
-        return Integer.parseInt(input);
+        return Integer.parseInt(in);
       } catch (NumberFormatException e) {
         System.out.println("Invalid input. Please enter a number.");
       }
@@ -103,8 +107,8 @@ public class MenuRenderer {
 
   public int readInt(String prompt, int min, int max) {
     while (true) {
-      int value = readInt(prompt);
-      if (value >= min && value <= max) return value;
+      int v = readInt(prompt);
+      if (v >= min && v <= max) return v;
       System.out.println(
         "Please enter a number between " + min + " and " + max + "."
       );
@@ -114,13 +118,12 @@ public class MenuRenderer {
   public LocalDate readLocalDate(String prompt) {
     while (true) {
       System.out.print(prompt);
-      String input = scanner.nextLine().trim();
+      String in = scanner.nextLine().trim();
+      if (in.isEmpty()) continue;
       try {
-        return LocalDate.parse(input);
+        return LocalDate.parse(in);
       } catch (DateTimeParseException e) {
-        System.out.println(
-          "Invalid date format. Please use yyyy-MM-dd (e.g., 2026-09-15)."
-        );
+        System.out.println("Invalid date. Use yyyy-MM-dd (e.g., 2026-09-15).");
       }
     }
   }
@@ -128,13 +131,12 @@ public class MenuRenderer {
   public LocalTime readLocalTime(String prompt) {
     while (true) {
       System.out.print(prompt);
-      String input = scanner.nextLine().trim();
+      String in = scanner.nextLine().trim();
+      if (in.isEmpty()) continue;
       try {
-        return LocalTime.parse(input);
+        return LocalTime.parse(in);
       } catch (DateTimeParseException e) {
-        System.out.println(
-          "Invalid time format. Please use HH:mm (e.g., 20:00)."
-        );
+        System.out.println("Invalid time. Use HH:mm (e.g., 20:00).");
       }
     }
   }
@@ -142,42 +144,38 @@ public class MenuRenderer {
   public boolean readYesNo(String prompt) {
     while (true) {
       System.out.print(prompt + " (y/n): ");
-      String input = scanner.nextLine().trim().toLowerCase();
-      if (input.equals("y") || input.equals("yes")) return true;
-      if (input.equals("n") || input.equals("no")) return false;
+      String in = scanner.nextLine().trim().toLowerCase();
+      if (in.isEmpty()) continue;
+      if (in.equals("y") || in.equals("yes")) return true;
+      if (in.equals("n") || in.equals("no")) return false;
       System.out.println("Please enter 'y' or 'n'.");
+    }
+  }
+
+  public String readEmail(String prompt) {
+    while (true) {
+      System.out.print(prompt);
+      String in = scanner.nextLine().trim();
+      if (
+        in.matches("^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$")
+      ) return in;
+      System.out.println("Invalid email. Example: user@example.com");
     }
   }
 
   public UUID readUUID(String prompt) {
     while (true) {
       System.out.print(prompt);
-      String input = scanner.nextLine().trim();
-      if (input.isEmpty()) {
+      String in = scanner.nextLine().trim();
+      if (in.isEmpty()) {
         System.out.println("Input cannot be empty.");
         continue;
       }
       try {
-        return UUID.fromString(input);
+        return UUID.fromString(in);
       } catch (IllegalArgumentException e) {
-        System.out.println("Invalid UUID format. Please enter a valid UUID.");
+        System.out.println("Invalid UUID format.");
       }
-    }
-  }
-
-  /**
-   * Reads and validates an email address using a simple regex.
-   */
-  public String readEmail(String prompt) {
-    while (true) {
-      System.out.print(prompt);
-      String input = scanner.nextLine().trim();
-      if (input.matches("^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$")) {
-        return input;
-      }
-      System.out.println(
-        "Invalid email format. Please enter a valid email (e.g., user@example.com)."
-      );
     }
   }
 
@@ -186,9 +184,7 @@ public class MenuRenderer {
     scanner.nextLine();
   }
 
-  // --------------------------------------------------------------
-  //  SELECTION PRINT METHODS
-  // --------------------------------------------------------------
+  // -------- Selection lists (with 0. Cancel) --------
   public int printAndSelectVenues(List<Venue> venues) {
     System.out.println("\nSelect a venue:");
     System.out.println("0. Cancel");
@@ -204,45 +200,23 @@ public class MenuRenderer {
   public int printAndSelectEvents(List<Event> events) {
     System.out.println("\nSelect an event:");
     System.out.println("0. Cancel");
-    DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
-    DateTimeFormatter timeFormatter = DateTimeFormatter.ofPattern("HH:mm");
+    DateTimeFormatter d = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+    DateTimeFormatter t = DateTimeFormatter.ofPattern("HH:mm");
     for (int i = 0; i < events.size(); i++) {
       Event e = events.get(i);
-      String startDate = e.getStartAt().format(dateFormatter);
-      String startTime = e.getStartAt().format(timeFormatter);
-      String endTime = e.getEndAt().format(timeFormatter);
       System.out.printf(
         "%d. %s | %s %s – %s%n",
         i + 1,
         e.getTitle(),
-        startDate,
-        startTime,
-        endTime
+        e.getStartAt().atZone(java.time.ZoneId.systemDefault()).format(d),
+        e.getStartAt().atZone(java.time.ZoneId.systemDefault()).format(t),
+        e.getEndAt().atZone(java.time.ZoneId.systemDefault()).format(t)
       );
     }
     return readInt("Enter choice: ", 0, events.size());
   }
 
-  public int printAndSelectSeats(List<Seat> seats) {
-    System.out.println("\nSelect a seat:");
-    System.out.println("0. Cancel");
-    for (int i = 0; i < seats.size(); i++) {
-      Seat s = seats.get(i);
-      System.out.printf(
-        "%d. Section: %s, Row: %s, Number: %d (Category: %s)%n",
-        i + 1,
-        s.getSection(),
-        s.getRow(),
-        s.getNumber(),
-        s.getCategory()
-      );
-    }
-    return readInt("Enter choice: ", 0, seats.size());
-  }
-
-  // --------------------------------------------------------------
-  //  PRINT METHODS
-  // --------------------------------------------------------------
+  // -------- Listing methods --------
   public void printVenues(List<Venue> venues) {
     if (venues.isEmpty()) {
       System.out.println("No venues found.");
@@ -251,7 +225,13 @@ public class MenuRenderer {
     System.out.println("\n========== Venues ==========");
     for (int i = 0; i < venues.size(); i++) {
       Venue v = venues.get(i);
-      System.out.printf("%d. %s (%s)%n", i + 1, v.getName(), v.getAddress());
+      System.out.printf(
+        "%d. %s (%s) [%s]%n",
+        i + 1,
+        v.getName(),
+        v.getAddress(),
+        v.getTimezone()
+      );
     }
     System.out.println("============================");
   }
@@ -262,17 +242,17 @@ public class MenuRenderer {
       return;
     }
     System.out.println("\n========== Events ==========");
-    DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
-    DateTimeFormatter timeFormatter = DateTimeFormatter.ofPattern("HH:mm");
+    DateTimeFormatter d = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+    DateTimeFormatter t = DateTimeFormatter.ofPattern("HH:mm");
     for (int i = 0; i < events.size(); i++) {
       Event e = events.get(i);
       System.out.printf(
         "%d. %s | %s %s – %s%n",
         i + 1,
         e.getTitle(),
-        e.getStartAt().format(dateFormatter),
-        e.getStartAt().format(timeFormatter),
-        e.getEndAt().format(timeFormatter)
+        e.getStartAt().atZone(java.time.ZoneId.systemDefault()).format(d),
+        e.getStartAt().atZone(java.time.ZoneId.systemDefault()).format(t),
+        e.getEndAt().atZone(java.time.ZoneId.systemDefault()).format(t)
       );
     }
     System.out.println("============================");
@@ -306,26 +286,21 @@ public class MenuRenderer {
     System.out.println("\n========== Reservations ==========");
     for (int i = 0; i < reservations.size(); i++) {
       Reservation r = reservations.get(i);
-
-      // Compute total price from all seats in this reservation
-      var seats = r.getSeats();
       java.math.BigDecimal total = java.math.BigDecimal.ZERO;
-      String currencySymbol = "";
-      for (var rs : seats) {
-        total = total.add(rs.price().amount());
-        if (currencySymbol.isEmpty()) {
-          currencySymbol = rs.price().currency().getSymbol();
-        }
+      String symbol = "";
+      for (var rs : r.getSeats()) {
+        total = total.add(rs.getPrice().getAmount());
+        if (symbol.isEmpty()) symbol = rs.getPrice().getCurrency().getSymbol();
       }
-
       System.out.printf(
-        "%d. Event: %s | Email: %s | Status: %s | Seats: %d | Total: %s %s%n",
+        "%d. ID: %s | Event: %s | Email: %s | Status: %s | Seats: %d | Total: %s %s%n",
         i + 1,
+        r.getId(),
         r.getEventId(),
         r.getCustomerEmail(),
         r.getStatus(),
-        seats.size(),
-        currencySymbol,
+        r.getSeats().size(),
+        symbol,
         total
       );
     }
@@ -333,32 +308,36 @@ public class MenuRenderer {
   }
 
   public void printStatus(
-    boolean sweeperRunning,
-    int activeHolds,
-    int cacheSize,
-    int lockedEvents
+    long venues,
+    long events,
+    long seats,
+    long reservations,
+    long holds
   ) {
     System.out.println("\n========== System Status ==========");
-    System.out.println("Sweeper running: " + (sweeperRunning ? "YES" : "NO"));
-    System.out.println("Active HOLD reservations: " + activeHolds);
-    System.out.println("Seat availability cache size: " + cacheSize);
-    System.out.println("Event locks currently held: " + lockedEvents);
+    System.out.println("Database:         PostgreSQL (running)");
+    System.out.println("Venues:           " + venues);
+    System.out.println("Events:           " + events);
+    System.out.println("Seats:            " + seats);
+    System.out.println("Reservations:     " + reservations);
+    System.out.println("Active HOLDs:     " + holds);
     System.out.println("====================================");
   }
 
-  public void printMessage(String message) {
-    System.out.println(message);
+  // -------- Generic messages --------
+  public void printMessage(String m) {
+    System.out.println(m);
   }
 
-  public void printError(String error) {
-    System.err.println("Error: " + error);
+  public void printError(String e) {
+    System.err.println("Error: " + e);
   }
 
-  public void printSuccess(String success) {
-    System.out.println("Success: " + success);
+  public void printSuccess(String s) {
+    System.out.println("Success: " + s);
   }
 
-  public void printReport(String report) {
-    System.out.println(report);
+  public void printReport(String r) {
+    System.out.println(r);
   }
 }

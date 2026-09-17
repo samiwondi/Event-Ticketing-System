@@ -1,43 +1,88 @@
 package com.example.demo.domain;
 
 import com.example.demo.enums.ReservationStatus;
+import jakarta.persistence.*;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
-import java.util.Objects;
-import java.util.Optional;
 import java.util.UUID;
+import org.hibernate.annotations.CreationTimestamp;
 
+@Entity
+@Table(name = "reservations")
 public class Reservation {
 
-  private final UUID id;
-  private final UUID eventId;
-  private final String customerEmail;
+  @Id
+  private UUID id;
+
+  @Column(name = "event_id", nullable = false)
+  private UUID eventId;
+
+  @Column(name = "customer_email", nullable = false)
+  private String customerEmail;
+
+  @Enumerated(EnumType.STRING)
+  @Column(nullable = false, length = 20)
   private ReservationStatus status;
-  private final Instant createdAt;
+
+  @Column(name = "hold_expires_at", nullable = false)
+  private Instant holdExpiresAt;
+
+  @CreationTimestamp
+  @Column(name = "created_at", updatable = false)
+  private Instant createdAt;
+
+  @Column(name = "confirmed_at")
   private Instant confirmedAt;
-  private final Instant holdExpiresAt;
-  private final List<ReservationSeat> seats;
+
+  @Version
+  private int version;
+
+  @OneToMany(
+    mappedBy = "reservation",
+    cascade = CascadeType.ALL,
+    orphanRemoval = true,
+    fetch = FetchType.EAGER
+  )
+  private List<ReservationSeat> seats = new ArrayList<>();
+
+  protected Reservation() {}
 
   public Reservation(
     UUID id,
     UUID eventId,
     String customerEmail,
     ReservationStatus status,
-    Instant createdAt,
-    Instant confirmedAt,
-    Instant holdExpiresAt,
-    List<ReservationSeat> seats
+    Instant holdExpiresAt
   ) {
-    this.id = Objects.requireNonNull(id);
-    this.eventId = Objects.requireNonNull(eventId);
-    this.customerEmail = Objects.requireNonNull(customerEmail);
-    this.status = (status != null) ? status : ReservationStatus.HOLD;
-    this.createdAt = (createdAt != null) ? createdAt : Instant.now();
-    this.confirmedAt = confirmedAt;
-    this.holdExpiresAt = Objects.requireNonNull(holdExpiresAt);
-    this.seats = (seats != null) ? new ArrayList<>(seats) : new ArrayList<>();
+    this.id = id;
+    this.eventId = eventId;
+    this.customerEmail = customerEmail;
+    this.status = status;
+    this.holdExpiresAt = holdExpiresAt;
+  }
+
+  @PrePersist
+  void prePersist() {
+    if (id == null) id = UUID.randomUUID();
+  }
+
+  public void addSeat(ReservationSeat seat) {
+    seats.add(seat);
+    seat.setReservation(this);
+  }
+
+  public void confirm() {
+    this.status = ReservationStatus.CONFIRMED;
+    this.confirmedAt = Instant.now();
+  }
+
+  public void cancel() {
+    this.status = ReservationStatus.CANCELLED;
+  }
+
+  public void expire() {
+    this.status = ReservationStatus.EXPIRED;
   }
 
   public UUID getId() {
@@ -56,77 +101,19 @@ public class Reservation {
     return status;
   }
 
-  public Instant getCreatedAt() {
-    return createdAt;
-  }
-
-  public Optional<Instant> getConfirmedAt() {
-    return Optional.ofNullable(confirmedAt);
-  }
-
   public Instant getHoldExpiresAt() {
     return holdExpiresAt;
   }
 
+  public Instant getCreatedAt() {
+    return createdAt;
+  }
+
+  public Instant getConfirmedAt() {
+    return confirmedAt;
+  }
+
   public List<ReservationSeat> getSeats() {
-    return Collections.unmodifiableList(seats);
-  }
-
-  public void confirm() {
-    this.status = this.status.transitionTo(ReservationStatus.CONFIRMED);
-    this.confirmedAt = Instant.now();
-  }
-
-  public void cancel() {
-    this.status = this.status.transitionTo(ReservationStatus.CANCELLED);
-  }
-
-  public void expire() {
-    if (this.status == ReservationStatus.HOLD) {
-      this.status = this.status.transitionTo(ReservationStatus.EXPIRED);
-    }
-  }
-
-  public boolean isExpired() {
-    if (
-      status == ReservationStatus.EXPIRED ||
-      (status == ReservationStatus.HOLD && Instant.now().isAfter(holdExpiresAt))
-    ) return true;
-    return false;
-  }
-
-  public boolean tryExpireIfHoldExpired() {
-    if (
-      status == ReservationStatus.HOLD && Instant.now().isAfter(holdExpiresAt)
-    ) {
-      expire();
-      return true;
-    }
-    return false;
-  }
-
-  @Override
-  public boolean equals(Object o) {
-    if (this == o) return true;
-    if (!(o instanceof Reservation that)) return false;
-    return Objects.equals(id, that.id);
-  }
-
-  @Override
-  public int hashCode() {
-    return Objects.hash(id);
-  }
-
-  @Override
-  public String toString() {
-    return (
-      "Reservation{id=" +
-      id +
-      ", eventId=" +
-      eventId +
-      ", status=" +
-      status +
-      "}"
-    );
+    return seats;
   }
 }

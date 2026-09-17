@@ -12,18 +12,21 @@ import com.example.demo.enums.EventStatus;
 import com.example.demo.enums.ReservationStatus;
 import com.example.demo.enums.SeatCategory;
 import com.example.demo.enums.TimeZoneEnum;
-import com.example.demo.persistence.PersistenceManager;
+import com.example.demo.exception.ConflictException;
+import com.example.demo.repository.jpa.EventJpaRepository;
+import com.example.demo.repository.jpa.ReservationJpaRepository;
+import com.example.demo.repository.jpa.SeatJpaRepository;
+import com.example.demo.repository.jpa.VenueJpaRepository;
 import com.example.demo.service.BookingService;
-import com.example.demo.service.HoldExpirySweeper;
 import com.example.demo.service.ReportService;
 import com.example.demo.service.VenueService;
 import com.example.demo.service.VenueService.SectionLayout;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -33,34 +36,41 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import org.springframework.stereotype.Component;
 
+@Component
 public class MenuController {
 
   private final VenueService venueService;
   private final BookingService bookingService;
   private final ReportService reportService;
-  private final HoldExpirySweeper sweeper;
-  private final MenuRenderer renderer;
-  private final PersistenceManager persistenceManager;
+  private final VenueJpaRepository venueRepo;
+  private final EventJpaRepository eventRepo;
+  private final SeatJpaRepository seatRepo;
+  private final ReservationJpaRepository reservationRepo;
+  private final MenuRenderer renderer = new MenuRenderer();
   private boolean running = true;
 
   public MenuController(
     VenueService venueService,
     BookingService bookingService,
     ReportService reportService,
-    HoldExpirySweeper sweeper,
-    MenuRenderer renderer,
-    PersistenceManager persistenceManager
+    VenueJpaRepository venueRepo,
+    EventJpaRepository eventRepo,
+    SeatJpaRepository seatRepo,
+    ReservationJpaRepository reservationRepo
   ) {
     this.venueService = venueService;
     this.bookingService = bookingService;
     this.reportService = reportService;
-    this.sweeper = sweeper;
-    this.renderer = renderer;
-    this.persistenceManager = persistenceManager;
+    this.venueRepo = venueRepo;
+    this.eventRepo = eventRepo;
+    this.seatRepo = seatRepo;
+    this.reservationRepo = reservationRepo;
   }
 
   public void run() {
+    System.out.println("\nTicketing CLI started. Connected to PostgreSQL.\n");
     while (running) {
       try {
         renderer.printMainMenu();
@@ -75,7 +85,6 @@ public class MenuController {
             running = false;
             renderer.printMessage("Goodbye!");
           }
-          default -> renderer.printError("Invalid option.");
         }
       } catch (Exception e) {
         renderer.printError("Unexpected error: " + e.getMessage());
@@ -84,18 +93,17 @@ public class MenuController {
     }
   }
 
-  // -----------------------------------------------------------------
-  //  SELECTION HELPERS
-  // -----------------------------------------------------------------
+  // ------------------------------------------------------------------
+  //  Selection helpers
+  // ------------------------------------------------------------------
   private Venue selectVenue() {
     var venues = venueService.listVenues();
     if (venues.isEmpty()) {
       renderer.printError("No venues available.");
       return null;
     }
-    int choice = renderer.printAndSelectVenues(venues);
-    if (choice == 0) return null;
-    return venues.get(choice - 1);
+    int c = renderer.printAndSelectVenues(venues);
+    return c == 0 ? null : venues.get(c - 1);
   }
 
   private Event selectEvent() {
@@ -104,36 +112,27 @@ public class MenuController {
       renderer.printError("No events available.");
       return null;
     }
-    int choice = renderer.printAndSelectEvents(events);
-    if (choice == 0) return null;
-    return events.get(choice - 1);
+    int c = renderer.printAndSelectEvents(events);
+    return c == 0 ? null : events.get(c - 1);
   }
 
-  // -----------------------------------------------------------------
-  //  HELPERS
-  // -----------------------------------------------------------------
   private ZoneId selectTimezone() {
-    var timezones = TimeZoneEnum.getAll();
-    while (true) {
-      renderer.printMessage("\nSelect timezone:");
-      for (TimeZoneEnum tz : timezones) {
-        System.out.println(tz.getId() + ". " + tz.getDisplayName());
-      }
-      int choice = renderer.readInt("Enter choice: ", 1, timezones.size());
-      return TimeZoneEnum.fromId(choice).getZoneId();
-    }
+    var list = TimeZoneEnum.getAll();
+    renderer.printMessage("\nSelect timezone:");
+    for (TimeZoneEnum tz : list)
+      System.out.println(tz.getId() + ". " + tz.getDisplayName());
+    int c = renderer.readInt("Enter choice: ", 1, list.size());
+    return TimeZoneEnum.fromId(c).getZoneId();
   }
 
   private Currency selectCurrency() {
     var currencies = Currency.values();
-    while (true) {
-      renderer.printMessage("\nSelect currency:");
-      for (int i = 0; i < currencies.length; i++) {
-        System.out.println((i + 1) + ". " + currencies[i]);
-      }
-      int choice = renderer.readInt("Enter choice: ", 1, currencies.length);
-      return currencies[choice - 1];
-    }
+    renderer.printMessage("\nSelect currency:");
+    for (int i = 0; i < currencies.length; i++) System.out.println(
+      (i + 1) + ". " + currencies[i]
+    );
+    int c = renderer.readInt("Enter choice: ", 1, currencies.length);
+    return currencies[c - 1];
   }
 
   private BigDecimal askPrice(String prompt, BigDecimal defaultPrice) {
@@ -141,83 +140,36 @@ public class MenuController {
       renderer.printMessage(
         prompt + " (press Enter for default " + defaultPrice + "): "
       );
-      String input = renderer.readLine();
-      if (input.isBlank()) return defaultPrice;
+      String in = renderer.readLine();
+      if (in.isBlank()) return defaultPrice;
       try {
-        return new BigDecimal(input);
+        return new BigDecimal(in);
       } catch (NumberFormatException e) {
-        renderer.printError("Invalid number. Please enter a valid amount.");
+        renderer.printError("Invalid number.");
       }
     }
   }
 
-  private boolean confirm(String message) {
-    return renderer.readYesNo(message);
-  }
-
-  /**
-   * Multi-select sections by index. Returns set of selected section names.
-   */
   private Set<String> multiSelectSections(List<String> sections) {
-    for (int i = 0; i < sections.size(); i++) {
-      System.out.println((i + 1) + ". " + sections.get(i));
-    }
+    for (int i = 0; i < sections.size(); i++) System.out.println(
+      (i + 1) + ". " + sections.get(i)
+    );
     System.out.print("Enter comma-separated numbers (Enter for none): ");
-    String input = renderer.readLine();
-    Set<String> selected = new HashSet<>();
-    if (input == null || input.isBlank()) return selected;
-    for (String part : input.split(",")) {
+    String in = renderer.readLine();
+    Set<String> sel = new HashSet<>();
+    if (in == null || in.isBlank()) return sel;
+    for (String p : in.split(",")) {
       try {
-        int idx = Integer.parseInt(part.trim()) - 1;
-        if (idx >= 0 && idx < sections.size()) {
-          selected.add(sections.get(idx));
-        }
+        int i = Integer.parseInt(p.trim()) - 1;
+        if (i >= 0 && i < sections.size()) sel.add(sections.get(i));
       } catch (NumberFormatException ignored) {}
     }
-    return selected;
+    return sel;
   }
 
-  /**
-   * Show a list of reservations for a customer (with total price) and let them pick one.
-   * Returns the selected reservation, or null if cancelled or none.
-   */
-  private Reservation selectReservationByEmail(String prompt) {
-    String email = renderer.readEmail("Enter customer email: ");
-    var userReservations = bookingService.getReservationsByEmail(email);
-    if (userReservations.isEmpty()) {
-      renderer.printError("No reservations found for this email.");
-      return null;
-    }
-
-    renderer.printMessage("\nReservations for " + email + ":");
-    System.out.println("0. Cancel");
-    for (int i = 0; i < userReservations.size(); i++) {
-      Reservation r = userReservations.get(i);
-      BigDecimal total = BigDecimal.ZERO;
-      String symbol = "";
-      for (ReservationSeat rs : r.getSeats()) {
-        total = total.add(rs.price().amount());
-        if (symbol.isEmpty()) symbol = rs.price().currency().getSymbol();
-      }
-      System.out.printf(
-        "%d. ID: %s | Event: %s | Status: %s | Seats: %d | Total: %s %s%n",
-        i + 1,
-        r.getId(),
-        r.getEventId(),
-        r.getStatus(),
-        r.getSeats().size(),
-        symbol,
-        total
-      );
-    }
-    int choice = renderer.readInt("Enter choice: ", 0, userReservations.size());
-    if (choice == 0) return null;
-    return userReservations.get(choice - 1);
-  }
-
-  // -----------------------------------------------------------------
-  //  VENUE MANAGEMENT
-  // -----------------------------------------------------------------
+  // ------------------------------------------------------------------
+  //  Venue Management
+  // ------------------------------------------------------------------
   private void venueManagement() {
     boolean back = false;
     while (!back) {
@@ -225,8 +177,7 @@ public class MenuController {
       int choice = renderer.readInt("", 1, 5);
       switch (choice) {
         case 1 -> {
-          var venues = venueService.listVenues();
-          renderer.printVenues(venues);
+          renderer.printVenues(venueService.listVenues());
           renderer.pressEnterToContinue();
         }
         case 2 -> {
@@ -234,169 +185,122 @@ public class MenuController {
           String name = renderer.readLine();
           renderer.printMessage("Enter address: ");
           String address = renderer.readLine();
-          ZoneId zoneId = selectTimezone();
+          ZoneId zone = selectTimezone();
 
           int sectionCount = renderer.readInt("How many sections? ", 1, 26);
-          int rowsPerSection = renderer.readInt(
-            "How many rows per section? ",
-            1,
-            500
-          );
+          int rows = renderer.readInt("How many rows per section? ", 1, 500);
           int seatsPerRow = renderer.readInt(
             "How many seats per row? ",
             1,
             500
           );
 
+          int total = sectionCount * rows * seatsPerRow;
+          renderer.printMessage("Creating " + total + " seats... please wait.");
+
           try {
-            List<SectionLayout> sections = new ArrayList<>();
+            List<SectionLayout> layouts = new ArrayList<>();
             for (int i = 0; i < sectionCount; i++) {
-              String sectionName = String.valueOf((char) ('A' + i));
-              sections.add(
-                new SectionLayout(sectionName, rowsPerSection, seatsPerRow)
-              );
+              String sname = String.valueOf((char) ('A' + i));
+              layouts.add(new SectionLayout(sname, rows, seatsPerRow));
             }
-            var venue = venueService.createVenueWithSections(
+            Venue v = venueService.createVenueWithSections(
               name,
               address,
-              zoneId.getId(),
-              sections
+              zone.getId(),
+              layouts
             );
-            int totalSeats = sectionCount * rowsPerSection * seatsPerRow;
             renderer.printSuccess(
-              "Venue created: " +
-                venue.getId() +
-                " (" +
-                sectionCount +
-                " sections, " +
-                rowsPerSection +
-                " rows × " +
-                seatsPerRow +
-                " seats = " +
-                totalSeats +
-                " seats)"
+              "Venue created: " + v.getId() + " (" + total + " seats)"
             );
-            persistenceManager.save();
           } catch (Exception e) {
             renderer.printError(e.getMessage());
           }
           renderer.pressEnterToContinue();
         }
         case 3 -> {
-          Venue venue = selectVenue();
-          if (venue == null) {
+          Venue v = selectVenue();
+          if (v == null) {
             renderer.pressEnterToContinue();
             break;
           }
           renderer.printMessage("\nWhat do you want to update?");
           System.out.println("0. Cancel");
-          System.out.println("1. Name (current: " + venue.getName() + ")");
-          System.out.println(
-            "2. Address (current: " + venue.getAddress() + ")"
-          );
-          System.out.println(
-            "3. Timezone (current: " + venue.getTimezone() + ")"
-          );
+          System.out.println("1. Name (current: " + v.getName() + ")");
+          System.out.println("2. Address (current: " + v.getAddress() + ")");
+          System.out.println("3. Timezone (current: " + v.getTimezone() + ")");
           System.out.println("4. All fields");
-          int fieldChoice = renderer.readInt("Enter choice: ", 0, 4);
-          if (fieldChoice == 0) {
+          int f = renderer.readInt("Enter choice: ", 0, 4);
+          if (f == 0) {
             renderer.pressEnterToContinue();
             break;
           }
-          String newName = venue.getName();
-          String newAddress = venue.getAddress();
-          String newTimezone = venue.getTimezone().getId();
+
+          String nn = v.getName(),
+            na = v.getAddress(),
+            ntz = v.getTimezone();
           boolean changed = false;
-          try {
-            switch (fieldChoice) {
-              case 1 -> {
-                renderer.printMessage("Enter new name: ");
-                newName = renderer.readLine();
-                changed = true;
-              }
-              case 2 -> {
-                renderer.printMessage("Enter new address: ");
-                newAddress = renderer.readLine();
-                changed = true;
-              }
-              case 3 -> {
-                ZoneId tz = selectTimezone();
-                newTimezone = tz.getId();
-                changed = true;
-              }
-              case 4 -> {
-                renderer.printMessage(
-                  "Enter new name (current: " + venue.getName() + "): "
-                );
-                newName = renderer.readLine();
-                renderer.printMessage(
-                  "Enter new address (current: " + venue.getAddress() + "): "
-                );
-                newAddress = renderer.readLine();
-                ZoneId tz = selectTimezone();
-                newTimezone = tz.getId();
-                changed = true;
-              }
-            }
-            if (changed) {
-              var updated = venueService.updateVenue(
-                venue.getId(),
-                newName,
-                newAddress,
-                newTimezone
-              );
+          if (f == 1 || f == 4) {
+            renderer.printMessage("Enter new name: ");
+            nn = renderer.readLine();
+            changed = true;
+          }
+          if (f == 2 || f == 4) {
+            renderer.printMessage("Enter new address: ");
+            na = renderer.readLine();
+            changed = true;
+          }
+          if (f == 3 || f == 4) {
+            ntz = selectTimezone().getId();
+            changed = true;
+          }
+          if (changed) {
+            try {
+              venueService.updateVenue(v.getId(), nn, na, ntz);
               renderer.printSuccess("Venue updated.");
-              persistenceManager.save();
+            } catch (Exception e) {
+              renderer.printError(e.getMessage());
             }
-          } catch (Exception e) {
-            renderer.printError(e.getMessage());
           }
           renderer.pressEnterToContinue();
         }
         case 4 -> {
-          Venue venue = selectVenue();
-          if (venue == null) {
+          Venue v = selectVenue();
+          if (v == null) {
             renderer.pressEnterToContinue();
             break;
           }
           if (
-            !confirm(
-              "Are you sure you want to delete this venue? All associated events and seats will also be removed."
+            !renderer.readYesNo(
+              "Delete this venue? All events/reservations will be removed."
             )
           ) {
             renderer.pressEnterToContinue();
             break;
           }
           try {
-            var seats = venueService.listSeatsByVenue(venue.getId());
-            for (Seat s : seats) {
-              venueService.deleteSeat(s.getId());
-            }
-            var events = venueService
-              .listEvents()
+            for (Event e : eventRepo
+              .findAll()
               .stream()
-              .filter(e -> e.getVenueId().equals(venue.getId()))
-              .collect(Collectors.toList());
-            for (Event e : events) {
+              .filter(ev -> ev.getVenueId().equals(v.getId()))
+              .toList()) {
               venueService.deleteEvent(e.getId());
             }
-            venueService.deleteVenue(venue.getId());
-            renderer.printSuccess("Venue and all associated data deleted.");
-            persistenceManager.save();
+            venueService.deleteVenue(v.getId());
+            renderer.printSuccess("Venue and all related data deleted.");
           } catch (Exception e) {
             renderer.printError(e.getMessage());
           }
           renderer.pressEnterToContinue();
         }
         case 5 -> back = true;
-        default -> renderer.printError("Invalid option.");
       }
     }
   }
 
-  // -----------------------------------------------------------------
-  //  EVENT MANAGEMENT
-  // -----------------------------------------------------------------
+  // ------------------------------------------------------------------
+  //  Event Management
+  // ------------------------------------------------------------------
   private void eventManagement() {
     boolean back = false;
     while (!back) {
@@ -404,8 +308,7 @@ public class MenuController {
       int choice = renderer.readInt("", 1, 7);
       switch (choice) {
         case 1 -> {
-          var events = venueService.listEvents();
-          renderer.printEvents(events);
+          renderer.printEvents(venueService.listEvents());
           renderer.pressEnterToContinue();
         }
         case 2 -> {
@@ -416,9 +319,9 @@ public class MenuController {
           }
           renderer.printMessage("Enter event title: ");
           String title = renderer.readLine();
-          ZoneId venueZone = venue.getTimezone();
+          ZoneId zone = ZoneId.of(venue.getTimezone());
 
-          LocalDate startDate = renderer.readLocalDate(
+          LocalDate sDate = renderer.readLocalDate(
             "Enter start date (yyyy-MM-dd): "
           );
           int days = renderer.readInt(
@@ -426,95 +329,93 @@ public class MenuController {
             0,
             365
           );
-          LocalTime startTime = renderer.readLocalTime(
-            "Enter start time (HH:mm, e.g., 20:00): "
+          LocalTime sTime = renderer.readLocalTime(
+            "Enter start time (HH:mm): "
           );
           int hours = renderer.readInt("Enter duration in hours: ", 0, 24);
           int minutes = renderer.readInt("Enter duration in minutes: ", 0, 59);
 
+          ZonedDateTime zStart = sDate.atTime(sTime).atZone(zone);
+          ZonedDateTime zEnd = zStart
+            .plusDays(days)
+            .plusHours(hours)
+            .plusMinutes(minutes);
+          Instant start = zStart.toInstant();
+          Instant end = zEnd.toInstant();
+
+          if (!end.isAfter(start)) {
+            renderer.printError("Duration must be > 0.");
+            renderer.pressEnterToContinue();
+            break;
+          }
+          if (start.isBefore(Instant.now())) {
+            renderer.printError("Start cannot be in the past.");
+            renderer.pressEnterToContinue();
+            break;
+          }
+
+          List<String> sections = seatRepo
+            .findByVenueIdOrderBySectionAscRowAscNumberAsc(venue.getId())
+            .stream()
+            .map(Seat::getSection)
+            .distinct()
+            .sorted()
+            .toList();
+          if (sections.isEmpty()) {
+            renderer.printError("This venue has no seats.");
+            renderer.pressEnterToContinue();
+            break;
+          }
+
+          Currency currency = selectCurrency();
+          BigDecimal standardPrice = askPrice(
+            "Enter standard seat price",
+            BigDecimal.valueOf(50)
+          );
+
+          Map<String, SeatCategory> sectionCats = new HashMap<>();
+          for (String s : sections) sectionCats.put(s, SeatCategory.STANDARD);
+
+          PricingRules rules = new PricingRules(
+            currency,
+            standardPrice
+          ).withSectionCategories(sectionCats);
+
+          if (renderer.readYesNo("Does this event have VIP sections?")) {
+            renderer.printMessage("\nWhich sections are VIP?");
+            Set<String> vip = multiSelectSections(sections);
+            if (!vip.isEmpty()) {
+              BigDecimal vipPrice = askPrice(
+                "Enter VIP seat price",
+                standardPrice.multiply(BigDecimal.valueOf(2))
+              );
+              rules = rules.withCategoryPrice(SeatCategory.VIP, vipPrice);
+              Map<String, SeatCategory> updated = new HashMap<>(
+                rules.sectionCategories()
+              );
+              for (String s : vip) updated.put(s, SeatCategory.VIP);
+              rules = rules.withSectionCategories(updated);
+            }
+          }
+          if (renderer.readYesNo("Does this event have VVIP sections?")) {
+            renderer.printMessage("\nWhich sections are VVIP?");
+            Set<String> vvip = multiSelectSections(sections);
+            if (!vvip.isEmpty()) {
+              BigDecimal vvipPrice = askPrice(
+                "Enter VVIP seat price",
+                standardPrice.multiply(BigDecimal.valueOf(3))
+              );
+              rules = rules.withCategoryPrice(SeatCategory.VVIP, vvipPrice);
+              Map<String, SeatCategory> updated = new HashMap<>(
+                rules.sectionCategories()
+              );
+              for (String s : vvip) updated.put(s, SeatCategory.VVIP);
+              rules = rules.withSectionCategories(updated);
+            }
+          }
+
           try {
-            ZonedDateTime start = startDate.atTime(startTime).atZone(venueZone);
-            ZonedDateTime end = start
-              .plusDays(days)
-              .plusHours(hours)
-              .plusMinutes(minutes);
-            if (!end.isAfter(start)) {
-              renderer.printError("Total duration must be > 0.");
-              renderer.pressEnterToContinue();
-              break;
-            }
-            ZonedDateTime now = ZonedDateTime.now(venueZone);
-            if (start.isBefore(now)) {
-              renderer.printError("Start date/time cannot be in the past.");
-              renderer.pressEnterToContinue();
-              break;
-            }
-
-            List<String> sections = venueService
-              .listSeatsByVenue(venue.getId())
-              .stream()
-              .map(Seat::getSection)
-              .distinct()
-              .sorted()
-              .collect(Collectors.toList());
-
-            if (sections.isEmpty()) {
-              renderer.printError("This venue has no seats.");
-              renderer.pressEnterToContinue();
-              break;
-            }
-
-            Currency currency = selectCurrency();
-            BigDecimal defaultPrice = BigDecimal.valueOf(50.00);
-            BigDecimal standardPrice = askPrice(
-              "Enter standard seat price",
-              defaultPrice
-            );
-
-            Map<String, SeatCategory> sectionCategories = new HashMap<>();
-            for (String s : sections)
-              sectionCategories.put(s, SeatCategory.STANDARD);
-
-            PricingRules rules = new PricingRules(
-              currency,
-              standardPrice
-            ).withSectionCategories(sectionCategories);
-
-            if (renderer.readYesNo("Does this event have VIP sections?")) {
-              renderer.printMessage("\nWhich sections are VIP?");
-              Set<String> vipSections = multiSelectSections(sections);
-              if (!vipSections.isEmpty()) {
-                BigDecimal vipPrice = askPrice(
-                  "Enter VIP seat price",
-                  standardPrice.multiply(BigDecimal.valueOf(2))
-                );
-                rules = rules.withCategoryPrice(SeatCategory.VIP, vipPrice);
-                Map<String, SeatCategory> updated = new HashMap<>(
-                  rules.sectionCategories()
-                );
-                for (String s : vipSections) updated.put(s, SeatCategory.VIP);
-                rules = rules.withSectionCategories(updated);
-              }
-            }
-
-            if (renderer.readYesNo("Does this event have VVIP sections?")) {
-              renderer.printMessage("\nWhich sections are VVIP?");
-              Set<String> vvipSections = multiSelectSections(sections);
-              if (!vvipSections.isEmpty()) {
-                BigDecimal vvipPrice = askPrice(
-                  "Enter VVIP seat price",
-                  standardPrice.multiply(BigDecimal.valueOf(3))
-                );
-                rules = rules.withCategoryPrice(SeatCategory.VVIP, vvipPrice);
-                Map<String, SeatCategory> updated = new HashMap<>(
-                  rules.sectionCategories()
-                );
-                for (String s : vvipSections) updated.put(s, SeatCategory.VVIP);
-                rules = rules.withSectionCategories(updated);
-              }
-            }
-
-            var event = venueService.createEvent(
+            Event e = venueService.createEvent(
               venue.getId(),
               title,
               start,
@@ -523,570 +424,446 @@ public class MenuController {
               currency,
               rules
             );
-            renderer.printSuccess("Event created: " + event.getId());
-            persistenceManager.save();
-          } catch (Exception e) {
-            renderer.printError("Error: " + e.getMessage());
+            renderer.printSuccess("Event created: " + e.getId());
+          } catch (Exception ex) {
+            renderer.printError(ex.getMessage());
           }
           renderer.pressEnterToContinue();
         }
         case 3 -> {
-          Event event = selectEvent();
-          if (event == null) {
+          Event e = selectEvent();
+          if (e == null) {
             renderer.pressEnterToContinue();
             break;
           }
           renderer.printReport(
             "Event: " +
-              event.getTitle() +
+              e.getTitle() +
               "\nVenue: " +
-              event.getVenueId() +
+              e.getVenueId() +
               "\nStart: " +
-              event.getStartAt() +
+              e.getStartAt() +
               "\nEnd: " +
-              event.getEndAt() +
+              e.getEndAt() +
               "\nCurrency: " +
-              event.getCurrency() +
+              e.getCurrency() +
               "\nPricing: " +
-              event.getPricingRules()
+              e.getPricingRules()
           );
           renderer.pressEnterToContinue();
         }
         case 4 -> {
-          Event event = selectEvent();
-          if (event == null) {
+          Event e = selectEvent();
+          if (e == null) {
             renderer.pressEnterToContinue();
             break;
           }
-          var seats = venueService.listSeatsByVenue(event.getVenueId());
-          renderer.printSeats(seats);
+          renderer.printSeats(venueService.listSeatsByVenue(e.getVenueId()));
           renderer.pressEnterToContinue();
         }
         case 5 -> {
-          Event event = selectEvent();
-          if (event == null) {
+          Event e = selectEvent();
+          if (e == null) {
             renderer.pressEnterToContinue();
             break;
           }
           renderer.printMessage("\nWhat do you want to update?");
           System.out.println("0. Cancel");
-          System.out.println("1. Title (current: " + event.getTitle() + ")");
-          System.out.println(
-            "2. Start date (current: " +
-              event.getStartAt().format(DateTimeFormatter.ISO_LOCAL_DATE) +
-              ")"
-          );
-          System.out.println(
-            "3. Duration in days (current: " +
-              java.time.Duration.between(
-                event.getStartAt().toLocalDate().atStartOfDay(),
-                event.getEndAt().toLocalDate().atStartOfDay()
-              ).toDays() +
-              " days)"
-          );
-          System.out.println(
-            "4. Start time (current: " +
-              event.getStartAt().format(DateTimeFormatter.ofPattern("HH:mm")) +
-              ")"
-          );
-          System.out.println(
-            "5. Duration in hours/minutes (current end time: " +
-              event.getEndAt().format(DateTimeFormatter.ofPattern("HH:mm")) +
-              ")"
-          );
-          System.out.println("6. All fields");
-          int fieldChoice = renderer.readInt("Enter choice: ", 0, 6);
-          if (fieldChoice == 0) {
+          System.out.println("1. Title (current: " + e.getTitle() + ")");
+          System.out.println("2. Start time (current: " + e.getStartAt() + ")");
+          System.out.println("3. End time (current: " + e.getEndAt() + ")");
+          System.out.println("4. All fields");
+          int f = renderer.readInt("Enter choice: ", 0, 4);
+          if (f == 0) {
             renderer.pressEnterToContinue();
             break;
           }
-          String newTitle = event.getTitle();
-          LocalDate newStartDate = event.getStartAt().toLocalDate();
-          int newDays = (int) java.time.Duration.between(
-            event.getStartAt().toLocalDate().atStartOfDay(),
-            event.getEndAt().toLocalDate().atStartOfDay()
-          ).toDays();
-          LocalTime newStartTime = event.getStartAt().toLocalTime();
-          long totalMinutes = java.time.Duration.between(
-            event.getStartAt(),
-            event.getEndAt()
-          ).toMinutes();
-          int currentHours = (int) (totalMinutes / 60);
-          int currentMinutes = (int) (totalMinutes % 60);
-          int newHours = currentHours,
-            newMinutes = currentMinutes;
-          boolean changed = false;
+
+          ZoneId zone = ZoneId.of(
+            venueRepo.findById(e.getVenueId()).get().getTimezone()
+          );
+
+          String nt = e.getTitle();
+          Instant ns = e.getStartAt(),
+            ne = e.getEndAt();
+
+          if (f == 1 || f == 4) {
+            renderer.printMessage("Enter new title: ");
+            nt = renderer.readLine();
+          }
+          if (f == 2 || f == 4) {
+            LocalDate d = renderer.readLocalDate(
+              "Enter new start date (yyyy-MM-dd): "
+            );
+            LocalTime t = renderer.readLocalTime(
+              "Enter new start time (HH:mm): "
+            );
+            ns = d.atTime(t).atZone(zone).toInstant();
+          }
+          if (f == 3 || f == 4) {
+            LocalDate d = renderer.readLocalDate(
+              "Enter new end date (yyyy-MM-dd): "
+            );
+            LocalTime t = renderer.readLocalTime(
+              "Enter new end time (HH:mm): "
+            );
+            ne = d.atTime(t).atZone(zone).toInstant();
+          }
+          if (!ne.isAfter(ns)) {
+            renderer.printError("End must be after start.");
+            renderer.pressEnterToContinue();
+            break;
+          }
+
           try {
-            ZoneId venueZone = event.getStartAt().getZone();
-            switch (fieldChoice) {
-              case 1 -> {
-                renderer.printMessage("Enter new title: ");
-                newTitle = renderer.readLine();
-                changed = true;
-              }
-              case 2 -> {
-                newStartDate = renderer.readLocalDate(
-                  "Enter new start date (yyyy-MM-dd): "
-                );
-                changed = true;
-              }
-              case 3 -> {
-                newDays = renderer.readInt(
-                  "Enter new duration in days: ",
-                  0,
-                  365
-                );
-                changed = true;
-              }
-              case 4 -> {
-                newStartTime = renderer.readLocalTime(
-                  "Enter new start time (HH:mm): "
-                );
-                changed = true;
-              }
-              case 5 -> {
-                newHours = renderer.readInt(
-                  "Enter new duration in hours: ",
-                  0,
-                  24
-                );
-                newMinutes = renderer.readInt(
-                  "Enter new duration in minutes: ",
-                  0,
-                  59
-                );
-                changed = true;
-              }
-              case 6 -> {
-                renderer.printMessage("Enter new title: ");
-                newTitle = renderer.readLine();
-                newStartDate = renderer.readLocalDate(
-                  "Enter new start date (yyyy-MM-dd): "
-                );
-                newDays = renderer.readInt(
-                  "Enter new duration in days: ",
-                  0,
-                  365
-                );
-                newStartTime = renderer.readLocalTime(
-                  "Enter new start time (HH:mm): "
-                );
-                newHours = renderer.readInt(
-                  "Enter new duration in hours: ",
-                  0,
-                  24
-                );
-                newMinutes = renderer.readInt(
-                  "Enter new duration in minutes: ",
-                  0,
-                  59
-                );
-                changed = true;
-              }
-            }
-            if (changed) {
-              ZonedDateTime newStart = newStartDate
-                .atTime(newStartTime)
-                .atZone(venueZone);
-              ZonedDateTime newEnd = newStart
-                .plusDays(newDays)
-                .plusHours(newHours)
-                .plusMinutes(newMinutes);
-              if (!newEnd.isAfter(newStart)) {
-                renderer.printError("Total duration must be > 0.");
-                renderer.pressEnterToContinue();
-                break;
-              }
-              ZonedDateTime now = ZonedDateTime.now(venueZone);
-              if (newStart.isBefore(now)) {
-                renderer.printError("Start date/time cannot be in the past.");
-                renderer.pressEnterToContinue();
-                break;
-              }
-              var updated = venueService.updateEvent(
-                event.getId(),
-                newTitle,
-                newStart,
-                newEnd,
-                event.getStatus(),
-                event.getPricingRules()
-              );
-              renderer.printSuccess("Event updated.");
-              persistenceManager.save();
-            }
-          } catch (Exception e) {
-            renderer.printError("Error: " + e.getMessage());
+            venueService.updateEvent(
+              e.getId(),
+              nt,
+              ns,
+              ne,
+              e.getStatus(),
+              e.getPricingRules()
+            );
+            renderer.printSuccess("Event updated.");
+          } catch (Exception ex) {
+            renderer.printError(ex.getMessage());
           }
           renderer.pressEnterToContinue();
         }
         case 6 -> {
-          Event event = selectEvent();
-          if (event == null) {
+          Event e = selectEvent();
+          if (e == null) {
             renderer.pressEnterToContinue();
             break;
           }
-          if (!confirm("Are you sure you want to delete this event?")) {
+          if (
+            !renderer.readYesNo(
+              "Delete this event? Reservations will also be deleted."
+            )
+          ) {
             renderer.pressEnterToContinue();
             break;
           }
           try {
-            var reservations = bookingService.getReservationsForEvent(
-              event.getId()
-            );
-            for (Reservation r : reservations) {
-              bookingService.cancelReservation(r.getId());
-            }
-            venueService.deleteEvent(event.getId());
+            venueService.deleteEvent(e.getId());
             renderer.printSuccess("Event deleted.");
-            persistenceManager.save();
-          } catch (Exception e) {
-            renderer.printError(e.getMessage());
+          } catch (Exception ex) {
+            renderer.printError(ex.getMessage());
           }
           renderer.pressEnterToContinue();
         }
         case 7 -> back = true;
-        default -> renderer.printError("Invalid option.");
       }
     }
   }
 
-  // -----------------------------------------------------------------
-  //  RESERVATION MANAGEMENT
-  // -----------------------------------------------------------------
+  // ------------------------------------------------------------------
+  //  Reservation Management
+  // ------------------------------------------------------------------
   private void reservationManagement() {
     boolean back = false;
     while (!back) {
       renderer.printReservationMenu();
       int choice = renderer.readInt("", 1, 6);
       switch (choice) {
-        case 1 -> {
-          // ---------- 1. Select event ----------
-          Event event = selectEvent();
-          if (event == null) {
-            renderer.pressEnterToContinue();
-            break;
-          }
-
-          // ---------- 2. Email verification ----------
-          String email = renderer.readEmail("Enter customer email: ");
-
-          // ---------- 3. Available seats for this event ----------
-          var allSeats = venueService.listSeatsByVenue(event.getVenueId());
-          if (allSeats.isEmpty()) {
-            renderer.printError("No seats available for this event.");
-            renderer.pressEnterToContinue();
-            break;
-          }
-          var reservations = bookingService.getReservationsForEvent(
-            event.getId()
-          );
-          Set<UUID> reservedSeatIds = reservations
-            .stream()
-            .filter(
-              r ->
-                r.getStatus() == ReservationStatus.HOLD ||
-                r.getStatus() == ReservationStatus.CONFIRMED
-            )
-            .flatMap(r -> r.getSeats().stream().map(ReservationSeat::seatId))
-            .collect(Collectors.toSet());
-
-          var availableSeats = allSeats
-            .stream()
-            .filter(s -> !reservedSeatIds.contains(s.getId()))
-            .collect(Collectors.toList());
-
-          if (availableSeats.isEmpty()) {
-            renderer.printError("All seats are reserved for this event.");
-            renderer.pressEnterToContinue();
-            break;
-          }
-
-          // ---------- 4. Select section ----------
-          List<String> sections = availableSeats
-            .stream()
-            .map(Seat::getSection)
-            .distinct()
-            .sorted()
-            .collect(Collectors.toList());
-
-          PricingRules rules = event.getPricingRules();
-
-          renderer.printMessage("\nSelect a section:");
-          for (int i = 0; i < sections.size(); i++) {
-            String section = sections.get(i);
-            SeatCategory category = rules.getCategoryForSection(section);
-            String label = (category == SeatCategory.STANDARD)
-              ? section
-              : section + " (" + category + ")";
-            System.out.println((i + 1) + ". " + label);
-          }
-          int sectionChoice = renderer.readInt(
-            "Enter choice: ",
-            1,
-            sections.size()
-          );
-          String selectedSection = sections.get(sectionChoice - 1);
-
-          // ---------- 5. Select row ----------
-          List<String> rows = availableSeats
-            .stream()
-            .filter(s -> s.getSection().equals(selectedSection))
-            .map(Seat::getRow)
-            .distinct()
-            .sorted()
-            .collect(Collectors.toList());
-
-          renderer.printMessage("\nSelect a row:");
-          for (int i = 0; i < rows.size(); i++) {
-            System.out.println((i + 1) + ". Row " + rows.get(i));
-          }
-          int rowChoice = renderer.readInt("Enter choice: ", 1, rows.size());
-          String selectedRow = rows.get(rowChoice - 1);
-
-          // ---------- 6. Select seat number(s) ----------
-          List<Seat> seatsInRow = availableSeats
-            .stream()
-            .filter(
-              s ->
-                s.getSection().equals(selectedSection) &&
-                s.getRow().equals(selectedRow)
-            )
-            .sorted(Comparator.comparingInt(Seat::getNumber))
-            .collect(Collectors.toList());
-
-          renderer.printMessage("\nSelect seat number(s):");
-          for (int i = 0; i < seatsInRow.size(); i++) {
-            System.out.println(
-              (i + 1) + ". Seat " + seatsInRow.get(i).getNumber()
-            );
-          }
-          renderer.printMessage(
-            "Enter comma-separated numbers (e.g., 1,3,5): "
-          );
-          String seatIdxStr = renderer.readLine();
-
-          List<Seat> selectedSeats = new ArrayList<>();
-          for (String part : seatIdxStr.split(",")) {
-            try {
-              int idx = Integer.parseInt(part.trim()) - 1;
-              if (idx >= 0 && idx < seatsInRow.size()) {
-                selectedSeats.add(seatsInRow.get(idx));
-              }
-            } catch (NumberFormatException ignored) {}
-          }
-          if (selectedSeats.isEmpty()) {
-            renderer.printError("No valid seats selected.");
-            renderer.pressEnterToContinue();
-            break;
-          }
-
-          // ---------- 7. Show total price ----------
-          BigDecimal total = BigDecimal.ZERO;
-          renderer.printMessage("\n========== Booking Summary ==========");
-          renderer.printMessage("Event: " + event.getTitle());
-          renderer.printMessage("Email: " + email);
-          renderer.printMessage("-------------------------------------");
-          for (Seat s : selectedSeats) {
-            SeatCategory cat = rules.getCategoryForSection(s.getSection());
-            Money price = rules.getPriceForCategory(cat);
-            renderer.printMessage(
-              "  Section " +
-                s.getSection() +
-                ", Row " +
-                s.getRow() +
-                ", Seat " +
-                s.getNumber() +
-                " [" +
-                cat +
-                "]" +
-                " = " +
-                price.currency().getSymbol() +
-                " " +
-                price.amount()
-            );
-            total = total.add(price.amount());
-          }
-          renderer.printMessage("-------------------------------------");
-          renderer.printMessage(
-            "Total: " + rules.currency().getSymbol() + " " + total
-          );
-          renderer.printMessage("=====================================");
-
-          // ---------- 8. Confirmation ----------
-          if (!renderer.readYesNo("Confirm this reservation?")) {
-            renderer.printMessage("Reservation cancelled.");
-            renderer.pressEnterToContinue();
-            break;
-          }
-
-          // ---------- 9. Create hold ----------
-          try {
-            List<UUID> seatIds = selectedSeats
-              .stream()
-              .map(Seat::getId)
-              .collect(Collectors.toList());
-            var reservation = bookingService.holdSeats(
-              event.getId(),
-              email,
-              seatIds
-            );
-            renderer.printSuccess(
-              "Hold created! Reservation ID: " + reservation.getId()
-            );
-            renderer.printReservations(List.of(reservation));
-            persistenceManager.save();
-          } catch (Exception e) {
-            renderer.printError(e.getMessage());
-          }
-          renderer.pressEnterToContinue();
-        }
-        case 2 -> {
-          // ---------- Confirm reservation by email ----------
-          Reservation selected = selectReservationByEmail("confirm");
-          if (selected == null) {
-            renderer.pressEnterToContinue();
-            break;
-          }
-          if (selected.getStatus() != ReservationStatus.HOLD) {
-            renderer.printError(
-              "Only HOLD reservations can be confirmed. Current status: " +
-                selected.getStatus()
-            );
-            renderer.pressEnterToContinue();
-            break;
-          }
-          if (!renderer.readYesNo("Confirm this reservation?")) {
-            renderer.pressEnterToContinue();
-            break;
-          }
-          try {
-            bookingService.confirmReservation(selected.getId());
-            renderer.printSuccess("Reservation confirmed.");
-            persistenceManager.save();
-          } catch (Exception e) {
-            renderer.printError(e.getMessage());
-          }
-          renderer.pressEnterToContinue();
-        }
-        case 3 -> {
-          // ---------- Cancel reservation by email ----------
-          Reservation selected = selectReservationByEmail("cancel");
-          if (selected == null) {
-            renderer.pressEnterToContinue();
-            break;
-          }
-          if (
-            selected.getStatus() == ReservationStatus.CANCELLED ||
-            selected.getStatus() == ReservationStatus.EXPIRED
-          ) {
-            renderer.printError(
-              "This reservation is already " + selected.getStatus() + "."
-            );
-            renderer.pressEnterToContinue();
-            break;
-          }
-          if (!renderer.readYesNo("Cancel this reservation?")) {
-            renderer.pressEnterToContinue();
-            break;
-          }
-          try {
-            bookingService.cancelReservation(selected.getId());
-            renderer.printSuccess("Reservation cancelled.");
-            persistenceManager.save();
-          } catch (Exception e) {
-            renderer.printError(e.getMessage());
-          }
-          renderer.pressEnterToContinue();
-        }
+        case 1 -> holdFlow();
+        case 2 -> confirmFlow();
+        case 3 -> cancelFlow();
         case 4 -> {
-          Event event = selectEvent();
-          if (event == null) {
+          Event e = selectEvent();
+          if (e == null) {
             renderer.pressEnterToContinue();
             break;
           }
-          var reservations = bookingService.getReservationsForEvent(
-            event.getId()
+          renderer.printReservations(
+            bookingService.getReservationsForEvent(e.getId())
           );
-          renderer.printReservations(reservations);
           renderer.pressEnterToContinue();
         }
         case 5 -> {
-          var holds = bookingService.getAllHolds();
-          renderer.printReservations(holds);
+          renderer.printReservations(bookingService.getAllHolds());
           renderer.pressEnterToContinue();
         }
         case 6 -> back = true;
-        default -> renderer.printError("Invalid option.");
       }
     }
   }
 
-  // -----------------------------------------------------------------
-  //  REPORTS
-  // -----------------------------------------------------------------
+  private void holdFlow() {
+    Event event = selectEvent();
+    if (event == null) {
+      renderer.pressEnterToContinue();
+      return;
+    }
+
+    String email = renderer.readEmail("Enter customer email: ");
+
+    List<Seat> all = venueService.listSeatsByVenue(event.getVenueId());
+    Set<UUID> reserved = bookingService
+      .getReservationsForEvent(event.getId())
+      .stream()
+      .filter(
+        r ->
+          r.getStatus() == ReservationStatus.HOLD ||
+          r.getStatus() == ReservationStatus.CONFIRMED
+      )
+      .flatMap(r -> r.getSeats().stream())
+      .map(ReservationSeat::getSeatId)
+      .collect(Collectors.toSet());
+    List<Seat> available = all
+      .stream()
+      .filter(s -> !reserved.contains(s.getId()))
+      .toList();
+    if (available.isEmpty()) {
+      renderer.printError("All seats are reserved.");
+      renderer.pressEnterToContinue();
+      return;
+    }
+
+    PricingRules rules = event.getPricingRules();
+
+    // Section
+    List<String> sections = available
+      .stream()
+      .map(Seat::getSection)
+      .distinct()
+      .sorted()
+      .toList();
+    renderer.printMessage("\nSelect a section:");
+    for (int i = 0; i < sections.size(); i++) {
+      String s = sections.get(i);
+      SeatCategory cat = rules.getCategoryForSection(s);
+      String label = (cat == SeatCategory.STANDARD) ? s : s + " (" + cat + ")";
+      System.out.println((i + 1) + ". " + label);
+    }
+    int sc = renderer.readInt("Enter choice: ", 1, sections.size());
+    String selectedSection = sections.get(sc - 1);
+
+    // Row
+    List<String> rows = available
+      .stream()
+      .filter(s -> s.getSection().equals(selectedSection))
+      .map(Seat::getRow)
+      .distinct()
+      .sorted()
+      .toList();
+    renderer.printMessage("\nSelect a row:");
+    for (int i = 0; i < rows.size(); i++) System.out.println(
+      (i + 1) + ". Row " + rows.get(i)
+    );
+    int rc = renderer.readInt("Enter choice: ", 1, rows.size());
+    String selectedRow = rows.get(rc - 1);
+
+    // Seats in row
+    List<Seat> inRow = available
+      .stream()
+      .filter(
+        s ->
+          s.getSection().equals(selectedSection) &&
+          s.getRow().equals(selectedRow)
+      )
+      .sorted(Comparator.comparingInt(Seat::getNumber))
+      .toList();
+    renderer.printMessage("\nSelect seat number(s):");
+    for (int i = 0; i < inRow.size(); i++) System.out.println(
+      (i + 1) + ". Seat " + inRow.get(i).getNumber()
+    );
+    renderer.printMessage("Enter comma-separated numbers (e.g., 1,3,5): ");
+    String seatStr = renderer.readLine();
+
+    List<Seat> selected = new ArrayList<>();
+    for (String p : seatStr.split(",")) {
+      try {
+        int i = Integer.parseInt(p.trim()) - 1;
+        if (i >= 0 && i < inRow.size()) selected.add(inRow.get(i));
+      } catch (NumberFormatException ignored) {}
+    }
+    if (selected.isEmpty()) {
+      renderer.printError("No valid seats selected.");
+      renderer.pressEnterToContinue();
+      return;
+    }
+
+    // Summary
+    BigDecimal total = BigDecimal.ZERO;
+    renderer.printMessage("\n========== Booking Summary ==========");
+    renderer.printMessage("Event: " + event.getTitle());
+    renderer.printMessage("Email: " + email);
+    renderer.printMessage("-------------------------------------");
+    for (Seat s : selected) {
+      SeatCategory cat = rules.getCategoryForSection(s.getSection());
+      Money price = rules.getPriceForCategory(cat);
+      renderer.printMessage(
+        "  Section " +
+          s.getSection() +
+          ", Row " +
+          s.getRow() +
+          ", Seat " +
+          s.getNumber() +
+          " [" +
+          cat +
+          "] – " +
+          price.getCurrency().getSymbol() +
+          " " +
+          price.getAmount()
+      );
+      total = total.add(price.getAmount());
+    }
+    renderer.printMessage("-------------------------------------");
+    renderer.printMessage(
+      "Total: " + rules.currency().getSymbol() + " " + total
+    );
+    renderer.printMessage("=====================================");
+
+    if (!renderer.readYesNo("Confirm this reservation?")) {
+      renderer.printMessage("Reservation cancelled.");
+      renderer.pressEnterToContinue();
+      return;
+    }
+
+    try {
+      List<UUID> seatIds = selected.stream().map(Seat::getId).toList();
+      Reservation r = bookingService.hold(event.getId(), email, seatIds);
+      renderer.printSuccess("Hold created! Reservation ID: " + r.getId());
+      renderer.printReservations(List.of(r));
+    } catch (ConflictException ce) {
+      renderer.printError("Conflict: " + ce.getMessage());
+    } catch (Exception e) {
+      renderer.printError(e.getMessage());
+    }
+    renderer.pressEnterToContinue();
+  }
+
+  private void confirmFlow() {
+    String email = renderer.readEmail("Enter customer email: ");
+    List<Reservation> list = bookingService.getReservationsByEmail(email);
+    if (list.isEmpty()) {
+      renderer.printError("No reservations for this email.");
+      renderer.pressEnterToContinue();
+      return;
+    }
+    renderer.printReservations(list);
+    int c = renderer.readInt("Enter choice (0 to cancel): ", 0, list.size());
+    if (c == 0) {
+      renderer.pressEnterToContinue();
+      return;
+    }
+
+    Reservation r = list.get(c - 1);
+    if (r.getStatus() != ReservationStatus.HOLD) {
+      renderer.printError(
+        "Only HOLD reservations can be confirmed. Current: " + r.getStatus()
+      );
+      renderer.pressEnterToContinue();
+      return;
+    }
+    if (!renderer.readYesNo("Confirm this reservation?")) {
+      renderer.pressEnterToContinue();
+      return;
+    }
+    try {
+      bookingService.confirm(r.getId());
+      renderer.printSuccess("Reservation confirmed.");
+    } catch (Exception e) {
+      renderer.printError(e.getMessage());
+    }
+    renderer.pressEnterToContinue();
+  }
+
+  private void cancelFlow() {
+    String email = renderer.readEmail("Enter customer email: ");
+    List<Reservation> list = bookingService.getReservationsByEmail(email);
+    if (list.isEmpty()) {
+      renderer.printError("No reservations for this email.");
+      renderer.pressEnterToContinue();
+      return;
+    }
+    renderer.printReservations(list);
+    int c = renderer.readInt("Enter choice (0 to cancel): ", 0, list.size());
+    if (c == 0) {
+      renderer.pressEnterToContinue();
+      return;
+    }
+
+    Reservation r = list.get(c - 1);
+    if (
+      r.getStatus() == ReservationStatus.CANCELLED ||
+      r.getStatus() == ReservationStatus.EXPIRED
+    ) {
+      renderer.printError("Already " + r.getStatus());
+      renderer.pressEnterToContinue();
+      return;
+    }
+    if (!renderer.readYesNo("Cancel this reservation?")) {
+      renderer.pressEnterToContinue();
+      return;
+    }
+    try {
+      bookingService.cancel(r.getId());
+      renderer.printSuccess("Reservation cancelled.");
+    } catch (Exception e) {
+      renderer.printError(e.getMessage());
+    }
+    renderer.pressEnterToContinue();
+  }
+
+  // ------------------------------------------------------------------
+  //  Reports
+  // ------------------------------------------------------------------
   private void reportsMenu() {
     boolean back = false;
     while (!back) {
       renderer.printReportsMenu();
-      int choice = renderer.readInt("", 1, 4);
-      switch (choice) {
+      int c = renderer.readInt("", 1, 4);
+      switch (c) {
         case 1 -> {
-          var map = reportService.seatsPerEvent();
-          if (map.isEmpty()) renderer.printMessage("No events found.");
-          else map.forEach((id, count) ->
-            renderer.printMessage("Event " + id + ": " + count + " seats")
+          var m = reportService.seatsPerEvent();
+          if (m.isEmpty()) renderer.printMessage("No events.");
+          else m.forEach((id, n) ->
+            renderer.printMessage("Event " + id + ": " + n + " seats")
           );
           renderer.pressEnterToContinue();
         }
         case 2 -> {
-          var map = reportService.reservationsPerEvent();
-          if (map.isEmpty()) renderer.printMessage("No reservations found.");
-          else map.forEach((id, statusCount) ->
-            renderer.printMessage("Event " + id + ": " + statusCount)
+          var m = reportService.reservationsPerEvent();
+          if (m.isEmpty()) renderer.printMessage("No reservations.");
+          else m.forEach((id, sc) ->
+            renderer.printMessage("Event " + id + ": " + sc)
           );
           renderer.pressEnterToContinue();
         }
         case 3 -> {
-          Event event = selectEvent();
-          if (event == null) {
+          Event e = selectEvent();
+          if (e == null) {
             renderer.pressEnterToContinue();
             break;
           }
-          String report = reportService.detailedSeatReport(event.getId());
-          renderer.printReport(report);
+          renderer.printReport(reportService.detailedSeatReport(e.getId()));
           renderer.pressEnterToContinue();
         }
         case 4 -> back = true;
-        default -> renderer.printError("Invalid option.");
       }
     }
   }
 
-  // -----------------------------------------------------------------
-  //  SYSTEM STATUS
-  // -----------------------------------------------------------------
+  // ------------------------------------------------------------------
+  //  System Status
+  // ------------------------------------------------------------------
   private void statusMenu() {
     boolean back = false;
     while (!back) {
       renderer.printStatusMenu();
-      int choice = renderer.readInt("", 1, 2);
-      switch (choice) {
-        case 1 -> {
-          boolean sweeperRunning = sweeper.isRunning();
-          int activeHolds = bookingService.getAllHolds().size();
-          int cacheSize = bookingService.getCacheSize();
-          int lockedEvents = bookingService.getLockedEventCount();
-          renderer.printStatus(
-            sweeperRunning,
-            activeHolds,
-            cacheSize,
-            lockedEvents
-          );
-          renderer.pressEnterToContinue();
-        }
-        case 2 -> back = true;
-        default -> renderer.printError("Invalid option.");
-      }
+      int c = renderer.readInt("", 1, 2);
+      if (c == 1) {
+        renderer.printStatus(
+          venueRepo.count(),
+          eventRepo.count(),
+          seatRepo.count(),
+          reservationRepo.count(),
+          bookingService.getAllHolds().size()
+        );
+        renderer.pressEnterToContinue();
+      } else back = true;
     }
   }
 }

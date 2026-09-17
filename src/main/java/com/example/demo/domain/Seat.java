@@ -2,20 +2,47 @@ package com.example.demo.domain;
 
 import com.example.demo.enums.SeatAttribute;
 import com.example.demo.enums.SeatCategory;
-import java.util.Collections;
-import java.util.Objects;
+import jakarta.persistence.*;
+import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
+@Entity
+@Table(
+  name = "seats",
+  uniqueConstraints = @UniqueConstraint(
+    name = "uq_seat_position",
+    columnNames = { "venue_id", "section", "row_label", "number" }
+  )
+)
 public class Seat {
 
-  private final UUID id;
-  private final UUID venueId;
-  private final String section;
-  private final String row;
-  private final int number;
-  private final SeatCategory category;
-  private final Set<SeatAttribute> attributes;
+  @Id
+  private UUID id;
+
+  @Column(name = "venue_id", nullable = false)
+  private UUID venueId;
+
+  @Column(nullable = false)
+  private String section;
+
+  @Column(name = "row_label", nullable = false)
+  private String row;
+
+  @Column(nullable = false)
+  private int number;
+
+  @Enumerated(EnumType.STRING)
+  @Column(nullable = false, length = 20)
+  private SeatCategory category;
+
+  @JdbcTypeCode(SqlTypes.JSON)
+  @Column(columnDefinition = "jsonb", nullable = false)
+  private Set<SeatAttribute> attributes = new HashSet<>();
+
+  protected Seat() {}
 
   public Seat(
     UUID id,
@@ -26,14 +53,19 @@ public class Seat {
     SeatCategory category,
     Set<SeatAttribute> attributes
   ) {
-    this.id = Objects.requireNonNull(id);
-    this.venueId = Objects.requireNonNull(venueId);
-    this.section = Objects.requireNonNull(section);
-    this.row = Objects.requireNonNull(row);
+    this.id = id;
+    this.venueId = venueId;
+    this.section = section;
+    this.row = row;
     this.number = number;
-    this.category = category != null ? category : SeatCategory.STANDARD;
+    this.category = category;
     this.attributes =
-      attributes == null ? Collections.emptySet() : Set.copyOf(attributes);
+      attributes == null ? new HashSet<>() : new HashSet<>(attributes);
+  }
+
+  @PrePersist
+  void prePersist() {
+    if (id == null) id = UUID.randomUUID();
   }
 
   public UUID getId() {
@@ -62,36 +94,5 @@ public class Seat {
 
   public Set<SeatAttribute> getAttributes() {
     return attributes;
-  }
-
-  @Override
-  public boolean equals(Object o) {
-    if (this == o) return true;
-    if (!(o instanceof Seat seat)) return false;
-    return Objects.equals(id, seat.id);
-  }
-
-  @Override
-  public int hashCode() {
-    return Objects.hash(id);
-  }
-
-  @Override
-  public String toString() {
-    return (
-      "Seat{id=" +
-      id +
-      ", section='" +
-      section +
-      "', row='" +
-      row +
-      "', number=" +
-      number +
-      ", category=" +
-      category +
-      ", attributes=" +
-      attributes +
-      "}"
-    );
   }
 }

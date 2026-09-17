@@ -1,42 +1,62 @@
 package com.example.demo.domain;
 
-import java.time.ZoneId;
-import java.util.Objects;
+import jakarta.persistence.*;
+import java.time.Instant;
 import java.util.UUID;
+import org.hibernate.annotations.CreationTimestamp;
 
+@Entity
+@Table(name = "venues")
 public class Venue {
-    private final UUID id;
-    private final String name;
-    private final String address;
-    private final ZoneId timezone;
 
-    public Venue(UUID id, String name, String address, ZoneId timezone) {
-        this.id = Objects.requireNonNull(id);
-        this.name = Objects.requireNonNull(name);
-        this.address = Objects.requireNonNull(address);
-        this.timezone = Objects.requireNonNull(timezone);
-    }
+  @Id
+  @Column(name = "id", updatable = false, nullable = false)
+  private UUID id;
 
-    // Getters
-    public UUID getId() { return id; }
-    public String getName() { return name; }
-    public String getAddress() { return address; }
-    public ZoneId getTimezone() { return timezone; }
+  @Column(nullable = false)
+  private String name;
 
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (!(o instanceof Venue venue)) return false;
-        return Objects.equals(id, venue.id);
-    }
+  @Column(nullable = false)
+  private String address;
 
-    @Override
-    public int hashCode() {
-        return Objects.hash(id);
-    }
+  @Column(nullable = false)
+  private String timezone;
 
-    @Override
-    public String toString() {
-        return "Venue{id=" + id + ", name='" + name + "'}";
-    }
+  @CreationTimestamp
+  @Column(name = "created_at", updatable = false)
+  private Instant createdAt;
+
+  protected Venue() {}
+
+  public Venue(UUID id, String name, String address, String timezone) {
+    this.id = id;
+    this.name = name;
+    this.address = address;
+    this.timezone = timezone;
+  }
+
+  @PrePersist
+  void prePersist() {
+    if (id == null) id = UUID.randomUUID();
+  }
+
+  public UUID getId() {
+    return id;
+  }
+
+  public String getName() {
+    return name;
+  }
+
+  public String getAddress() {
+    return address;
+  }
+
+  public String getTimezone() {
+    return timezone;
+  }
+
+  public Instant getCreatedAt() {
+    return createdAt;
+  }
 }

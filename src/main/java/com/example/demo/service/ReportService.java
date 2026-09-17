@@ -1,81 +1,93 @@
 package com.example.demo.service;
 
+import com.example.demo.domain.Event;
 import com.example.demo.domain.Reservation;
 import com.example.demo.domain.ReservationSeat;
-import com.example.demo.repository.EventRepository;
-import com.example.demo.repository.ReservationRepository;
-import com.example.demo.repository.SeatRepository;
+import com.example.demo.repository.jpa.EventJpaRepository;
+import com.example.demo.repository.jpa.ReservationJpaRepository;
+import com.example.demo.repository.jpa.SeatJpaRepository;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
+@Service
 public class ReportService {
 
-  private final ReservationRepository reservationRepository;
-  private final SeatRepository seatRepository;
-  private final EventRepository eventRepository;
+  private final ReservationJpaRepository reservationRepo;
+  private final SeatJpaRepository seatRepo;
+  private final EventJpaRepository eventRepo;
 
   public ReportService(
-    ReservationRepository reservationRepository,
-    SeatRepository seatRepository,
-    EventRepository eventRepository
+    ReservationJpaRepository reservationRepo,
+    SeatJpaRepository seatRepo,
+    EventJpaRepository eventRepo
   ) {
-    this.reservationRepository = reservationRepository;
-    this.seatRepository = seatRepository;
-    this.eventRepository = eventRepository;
+    this.reservationRepo = reservationRepo;
+    this.seatRepo = seatRepo;
+    this.eventRepo = eventRepo;
   }
 
+  @Transactional(readOnly = true)
   public Map<UUID, Long> seatsPerEvent() {
-    var events = eventRepository.findAll();
-    return events
-      .stream()
-      .collect(
-        Collectors.toMap(
-          event -> event.getId(),
-          event ->
-            (long) seatRepository.findByVenueId(event.getVenueId()).size()
-        )
-      );
+    Map<UUID, Long> result = new LinkedHashMap<>();
+    for (Event e : eventRepo.findAll()) {
+      long count = seatRepo
+        .findByVenueIdOrderBySectionAscRowAscNumberAsc(e.getVenueId())
+        .size();
+      result.put(e.getId(), count);
+    }
+    return result;
   }
 
+  @Transactional(readOnly = true)
   public Map<UUID, Map<String, Long>> reservationsPerEvent() {
-    var allReservations = reservationRepository.findAll();
-    return allReservations
-      .stream()
-      .collect(
-        Collectors.groupingBy(
-          Reservation::getEventId,
+    Map<UUID, Map<String, Long>> result = new LinkedHashMap<>();
+    for (Event e : eventRepo.findAll()) {
+      Map<String, Long> byStatus = reservationRepo
+        .findByEventId(e.getId())
+        .stream()
+        .collect(
           Collectors.groupingBy(
             r -> r.getStatus().name(),
             Collectors.counting()
           )
-        )
-      );
+        );
+      if (!byStatus.isEmpty()) result.put(e.getId(), byStatus);
+    }
+    return result;
   }
 
+  @Transactional(readOnly = true)
   public String detailedSeatReport(UUID eventId) {
-    var event = eventRepository.findById(eventId).orElse(null);
+    Event event = eventRepo.findById(eventId).orElse(null);
     if (event == null) return "Event not found";
 
-    var allSeats = seatRepository.findByVenueId(event.getVenueId());
-    var reservations = reservationRepository.findByEventId(eventId);
-    var reservedSeatIds = reservations
+    int totalSeats = seatRepo
+      .findByVenueIdOrderBySectionAscRowAscNumberAsc(event.getVenueId())
+      .size();
+    long reserved = reservationRepo
+      .findByEventId(eventId)
       .stream()
-      .flatMap(r -> r.getSeats().stream().map(ReservationSeat::seatId))
-      .collect(Collectors.toSet());
+      .flatMap(r -> r.getSeats().stream())
+      .map(ReservationSeat::getSeatId)
+      .distinct()
+      .count();
 
     return (
       "Seat report for event: " +
       event.getTitle() +
       "\n" +
       "Total seats: " +
-      allSeats.size() +
+      totalSeats +
       "\n" +
       "Reserved seats: " +
-      reservedSeatIds.size() +
+      reserved +
       "\n" +
       "Available seats: " +
-      (allSeats.size() - reservedSeatIds.size())
+      (totalSeats - reserved)
     );
   }
 }
